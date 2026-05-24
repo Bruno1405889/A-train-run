@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidScore(data) {
+      return data.userId is string && data.userId.size() <= 128
+          && data.username is string && data.username.size() >= 1 && data.username.size() <= 50
+          && data.score is int && data.score >= 0 && data.score < 1000000
+          && data.isGuest is bool
+          && data.createdAt == request.time
+          && (!data.keys().hasAll(['photoURL']) || (data.photoURL is string && data.photoURL.size() <= 2048));
+    }
+
+    match /scores/{scoreId} {
+      // Anyone can read high scores
+      allow read: if true;
+
+      // Creating a score doc (only authenticated non-guest users can create under their own UID)
+      allow create: if isValidId(scoreId) && 
+                      isValidScore(incoming()) && 
+                      isSignedIn() && 
+                      scoreId == request.auth.uid &&
+                      incoming().userId == request.auth.uid && 
+                      incoming().isGuest == false;
+
+      // Updating an existing score doc (only the authenticated owner can update, if the new score is higher or equal)
+      allow update: if isSignedIn() && 
+                      scoreId == request.auth.uid && 
+                      isValidId(scoreId) && 
+                      isValidScore(incoming()) && 
+                      incoming().userId == request.auth.uid && 
+                      incoming().isGuest == false &&
+                      incoming().score >= existing().score;
+    }
+  }
+}

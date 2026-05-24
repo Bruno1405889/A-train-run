@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Pixel Pulse: 32-Bit Evolved",
+  "description": "Enhanced 32-bit retro action with improved characters, global leaderboards, and seamless Google or guest login options.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

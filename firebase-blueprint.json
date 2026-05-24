@@ -1,0 +1,24 @@
+{
+  "entities": {
+    "Score": {
+      "title": "Score",
+      "description": "High score entry for a player in A-Train Run game",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique user ID or guest ID" },
+        "username": { "type": "string", "description": "Player name displayed on the scoreboard" },
+        "photoURL": { "type": "string", "description": "Player avatar URL or guest placeholder" },
+        "score": { "type": "integer", "description": "High score achieved in meters" },
+        "isGuest": { "type": "boolean", "description": "True if player is a visitor/guest" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of score submission" }
+      },
+      "required": ["userId", "username", "score", "isGuest", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/scores/{scoreId}": {
+      "schema": "Score",
+      "description": "Leaderboard scores database"
+    }
+  }
+}
