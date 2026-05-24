@@ -60,43 +60,13 @@ interface ZoneType {
 const ZONES: ZoneType[] = [
   {
     id: 1,
-    name: "NOVA YORK: CENTRO",
-    sub: "Fase 1: Corrida pelas avenidas externas da Vought",
+    name: "FLORESTA DA VOUGHT (NOITE)",
+    sub: "Fuga silenciosa! Desvie dos galhos e rochas sob as árvores!",
     minDistance: 0,
-    bgGradient: "linear-gradient(to bottom, #07091e, #0e1236, #1b2057)",
-    groundBorder: "#1e5e22",
-    groundBg: "linear-gradient(to bottom, #422613, #1f1108)",
-    particleColor: "#00ffff"
-  },
-  {
-    id: 2,
-    name: "TÚNEL SUBTERRÂNEO NEON",
-    sub: "Fase 2: Segredos industriais em altíssima velocidade",
-    minDistance: 250,
-    bgGradient: "linear-gradient(to bottom, #11011c, #2a033b, #46055c)",
-    groundBorder: "#00d2ff",
-    groundBg: "linear-gradient(to bottom, #191c2b, #0c0d14)",
-    particleColor: "#e000ff"
-  },
-  {
-    id: 3,
-    name: "LABORATÓRIO RESTRITO COMPOSTO V",
-    sub: "Fase 3: Alvos biológicos e químicos experimentais",
-    minDistance: 600,
-    bgGradient: "linear-gradient(to bottom, #01140d, #032e20, #064c34)",
-    groundBorder: "#39ff14",
-    groundBg: "linear-gradient(to bottom, #101c13, #060d09)",
-    particleColor: "#39ff14"
-  },
-  {
-    id: 4,
-    name: "TEMPESTADE RETRO-APOCALÍPTICA",
-    sub: "Fase Final: Sobreviva à fúria máxima do Capitão Pátria!",
-    minDistance: 1100,
-    bgGradient: "linear-gradient(to bottom, #1f0101, #3c0303, #610505)",
-    groundBorder: "#ff2200",
-    groundBg: "linear-gradient(to bottom, #210d0d, #0d0404)",
-    particleColor: "#ff4400"
+    bgGradient: "linear-gradient(to bottom, #020307, #060c1c, #0b162c)",
+    groundBorder: "#15803d",
+    groundBg: "linear-gradient(to bottom, #142517, #081009)",
+    particleColor: "#22c55e"
   }
 ];
 
@@ -144,6 +114,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const itemsRef = useRef<ItemInstance[]>([]);
   const particlesRef = useRef<ParticleInstance[]>([]);
   const lastObstacleTypeRef = useRef<string>('');
+
+  // Shield Invulnerabilities State Refs (to solve core React loop stale-closures)
+  const shieldActiveRef = useRef(false);
+  const shieldTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // Key tracking
   const keysPressedRef = useRef<{ [key: string]: boolean }>({});
@@ -245,6 +219,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       setLaserActive(false);
       setShieldActive(false);
       setJumpCount(0);
+
+      // Reset shield invincibility refs
+      shieldActiveRef.current = false;
+      if (shieldTimeoutRef.current) {
+        clearTimeout(shieldTimeoutRef.current);
+        shieldTimeoutRef.current = undefined;
+      }
 
       obstaclesRef.current = [];
       itemsRef.current = [];
@@ -414,24 +395,23 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (cycle.timer <= 0) {
         cycle.state = 'charging';
         cycle.timer = 50; 
-        setLaserWarning(true);
         playLaserChargeSound();
       }
     } else if (cycle.state === 'charging') {
       if (cycle.timer <= 0) {
         cycle.state = 'shooting';
         cycle.timer = 110; 
-        setLaserWarning(false);
         setLaserActive(true);
         playLaserShootSound();
       }
     } else if (cycle.state === 'shooting') {
-      // Fire sparks high in the sky background rather than at player feet level
+      // Fire sparks on the ground near A-Train's feet to generate extreme tension!
       if (globalCyclesRef.current % 3 === 0) {
-        createSparks(420 + Math.random() * 120, 180 + Math.random() * 40, '#ff0033');
+        createSparks(210 + Math.random() * 45, 35 + Math.random() * 5, '#ff2200');
+        createSparks(210 + Math.random() * 45, 35 + Math.random() * 5, '#ffd54f');
       }
 
-      // COLLISION REMOVED: Homelander's laser is purely figurative and shoots high overhead, keeping the runner safe!
+      // COLLISION REMOVED: Homelander's laser is purely figurative and shoots behind/close to player feet level, keeping A-Train safe!
 
       if (cycle.timer <= 0) {
         cycle.state = 'idle';
@@ -513,11 +493,25 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       const oTop = obs.bottom + obs.height;
 
       if (oLeft < pRight && oRight > pLeft && pTop > oBottom && pBottom < oTop) {
-        if (shieldActive) {
-          setShieldActive(false);
+        if (shieldActiveRef.current) {
+          // Destroys the obstacle during V1 Shield's 3-second invincibility!
           obstaclesRef.current.splice(i, 1);
           playHitSound();
           createFeedbackFlash('shield-break');
+          // Disperse cool impact particles
+          for (let s = 0; s < 10; s++) {
+            particlesRef.current.push({
+              id: Math.random().toString(),
+              x: oLeft + obs.width / 2,
+              y: oBottom + obs.height / 2,
+              vx: (Math.random() - 0.5) * 10 - 2,
+              vy: Math.random() * 8 + 1,
+              size: Math.random() * 6 + 3,
+              color: '#818cf8',
+              opacity: 0.9,
+              life: 20
+            });
+          }
           continue;
         } else {
           triggerGameOver();
@@ -542,13 +536,24 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       if (iLeft < pRight && iRight > pLeft && pTop > iBottom && pBottom < iTop) {
         playCollectSound();
+        
+        // True 3-second V1 Shield invulnerability setup
+        shieldActiveRef.current = true;
         setShieldActive(true);
+        if (shieldTimeoutRef.current) {
+          clearTimeout(shieldTimeoutRef.current);
+        }
+        shieldTimeoutRef.current = setTimeout(() => {
+          shieldActiveRef.current = false;
+          setShieldActive(false);
+        }, 3000);
+
         setMultiplier(3);
         setMultiplierActive(true);
         scoreRef.current += 50; 
         createCompoundVFlash();
 
-        // High multiplier expires after a few seconds
+        // High multiplier expires after 6 seconds
         setTimeout(() => {
           setMultiplier(1);
           setMultiplierActive(false);
@@ -759,33 +764,12 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           )}
         </div>
 
-        {/* Phase Zone Title overlay */}
+        {/* Simple running circuit overlay */}
         <div className="flex items-center gap-2 bg-slate-950/85 border-2 border-slate-700 rounded-lg px-3 py-1 text-[10px] font-mono text-slate-300 select-none shadow-lg">
           <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: currentZone.particleColor }} />
-          <span>FASE {currentZone.id}: {currentZone.name}</span>
+          <span>{currentZone.name}</span>
         </div>
       </div>
-
-      {/* Cinematic Slide phase notification */}
-      {activeZoneBanner && (
-        <div className="absolute inset-x-0 top-1/3 -translate-y-1/2 flex justify-center items-center z-30 select-none pointer-events-none">
-          <div className="bg-slate-950/95 border-2 border-cyan-400 px-6 py-4 rounded-xl shadow-2xl backdrop-blur max-w-lg text-center transform scale-95 animate-pulse">
-            <h3 className="text-cyan-400 font-mono text-sm tracking-widest font-black uppercase flex items-center justify-center gap-2">
-              <Award className="text-yellow-400" size={16} /> Nova Fase do Percurso!
-            </h3>
-            <p className="font-mono text-[11px] text-white font-extrabold mt-1 uppercase">{activeZoneBanner.name}</p>
-            <p className="font-sans text-[9px] text-slate-400 mt-0.5">{activeZoneBanner.sub}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Laser threat indicator warnings */}
-      {laserWarning && (
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-1.5 select-none pointer-events-none">
-          <span className="text-red-500 font-mono text-sm text-glow-red animate-ping tracking-widest font-black uppercase">¡FÚRIA DE LASER DO PATRIA!</span>
-          <span className="text-slate-300 font-sans text-[10px] uppercase tracking-wider bg-red-950/80 border border-red-500 rounded px-2 py-0.5">Visão térmica cruzando os céus!</span>
-        </div>
-      )}
 
       {/* HOMELANDER (Capitão Pátria) */}
       <div 
@@ -855,23 +839,35 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           {/* Head & Skin tones */}
           <rect x="14" y="5" width="12" height="13.5" fill="url(#hl-skin)" rx="4" stroke="#010206" strokeWidth="1.2"/>
           
-          {/* Golden Blonde Hair detail */}
-          <path d="M13 9 C 13 -1, 27 -1, 27 7 C 25 3, 22 4, 19.5 5 C 18 4, 15 3, 13 9 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="1"/>
-          <path d="M27 7 C 27 10, 24 11, 23 8 C 24 6, 26 5, 27 7 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.8"/>
-          <polygon points="13,8 13,11 15,9" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.5"/> 
-          <polygon points="27,7 27,10 25,8" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.5"/> 
+          {/* Homelander's Premium Majestic Coiffed Blonde Hair */}
+          <g id="hl-hair-premium">
+            {/* Base hair silhouette block with blonde volume wave */}
+            <path d="M12 9 C 11.5 5, 13.5 1, 20 0.5 C 26 0, 28 3.5, 28 7 C 28.5 10.5, 27 12, 25 11 C 23.5 10.5, 23 7.8, 20.5 7.8 C 18 7.8, 17 10, 15 10 C 13.5 10, 12.5 10.5, 12 9 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="1.3"/>
+            
+            {/* Front swoop/quiff pompadour detail (giving volume over his forehead) */}
+            <path d="M13.5 5.5 C 13 -1, 21.5 -1.5, 23.5 1.5 C 24.5 3, 23.5 5, 21.5 5 C 18 5, 15 3.5, 13.5 5.5 Z" fill="#fff59d" stroke="#010206" strokeWidth="0.8" />
+            <path d="M15.5 3 C 17.5 1, 22 1, 22.5 4" stroke="#f57f17" strokeWidth="0.8" fill="none" />
+            <path d="M14.5 4.5 C 16.5 2, 20.5 2, 21 5" stroke="#fffde7" strokeWidth="0.8" fill="none" />
+            
+            {/* Side locks and sideburn side styling */}
+            <path d="M12.5 8 C 12 9, 13 11, 14 11.5 L 14.5 8.5 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.8" />
+            <path d="M26.5 7.5 C 27 8.5, 26 9.5, 25.5 11 L 25 8.5 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.8" />
+            
+            {/* Glimmer highlight locks */}
+            <path d="M17 1 Q 23 0 26 3.5" stroke="#ffffff" strokeWidth="0.7" fill="none" opacity="0.65" />
+          </g>
 
           {/* Ruby red Laser eye sockets */}
           <circle cx="21" cy="11.5" r="1.5" fill="#ff0000" />
-          <circle cx="21" cy="11.5" r="0.7" fill="#ffffff" className={`${laserWarning ? 'animate-ping' : ''}`} />
+          <circle cx="21" cy="11.5" r="0.7" fill="#ffffff" className={`${laserActive ? 'animate-ping' : ''}`} />
           <circle cx="25" cy="12" r="1.5" fill="#ff0000" />
-          <circle cx="25" cy="12" r="0.7" fill="#ffffff" className={`${laserWarning ? 'animate-ping' : ''}`} />
+          <circle cx="25" cy="12" r="0.7" fill="#ffffff" className={`${laserActive ? 'animate-ping' : ''}`} />
         </svg>
 
-        {/* EYE GLOW RAY BEAM (Cinematic overhead) */}
+        {/* EYE GLOW RAY BEAM (Scenic Tension: targeted downwards near A-Train's feet, non-lethal) */}
         <div 
-          className={`absolute top-[40px] left-[55px] w-[600px] h-3.5 bg-gradient-to-r from-[#ff0000] via-[#ffffff] to-[#ff2222] rounded-full origin-top-left -rotate-[6deg] shadow-[0_0_20px_#ff1a1a,0_0_40px_#ff0000] z-16 transition-opacity opacity-0 pointer-events-none duration-100 ${
-            laserActive ? '!opacity-[0.98] animate-pulse scale-y-125' : ''
+          className={`absolute top-[25px] left-[44px] w-[305px] h-[7px] bg-gradient-to-r from-[#ff0000] via-[#ffd54f] to-[#ff2222]/30 rounded-full origin-top-left rotate-[64.3deg] shadow-[0_0_15px_#ff1a1a,0_0_30px_#ff0000] z-[12] transition-opacity opacity-0 pointer-events-none duration-100 ${
+            laserActive ? '!opacity-[0.98] animate-pulse scale-y-110' : ''
           }`} 
         />
       </div>
@@ -908,10 +904,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
         {/* Improved high-definition SVG artwork of A-Train */}
         <svg 
-          className="w-full h-full filter drop-shadow-[5px_12px_8px_rgba(0,0,0,0.45)]" 
+          className="atrain-svg w-full h-full filter drop-shadow-[5px_12px_8px_rgba(0,0,0,0.45)]" 
           viewBox="0 0 40 60" 
           fill="none" 
           xmlns="http://www.w3.org/2000/svg"
+          style={{ overflow: 'visible' }}
         >
           <defs>
             <linearGradient id="at-suit" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#051740"/><stop offset="50%" stop-color="#14429e"/><stop offset="100%" stop-color="#040d24"/></linearGradient>
@@ -997,49 +994,116 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
               {obs.type === 'log' && (
                 <svg width="100%" height="100%" viewBox="0 0 65 35" xmlns="http://www.w3.org/2000/svg">
                   <defs>
-                    <linearGradient id="log-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8c5222"/><stop offset="50%" stop-color="#593211"/><stop offset="100%" stop-color="#361a07"/></linearGradient>
+                    <linearGradient id="log-body" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#5c3818"/>
+                      <stop offset="50%" stop-color="#40250d"/>
+                      <stop offset="100%" stop-color="#2a1605"/>
+                    </linearGradient>
+                    <linearGradient id="moss-grad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#22c55e"/>
+                      <stop offset="100%" stop-color="#15803d"/>
+                    </linearGradient>
                   </defs>
-                  <rect width="65" height="35" fill="url(#log-grad)" rx="7" />
-                  <path d="M10 5 H50 V11 H10 Z" fill="#325a1d" opacity="0.85" /> 
-                  <ellipse cx="58" cy="17" rx="5.5" ry="11.5" fill="#a87140"/>
-                  <ellipse cx="58" cy="17" rx="3" ry="7.5" fill="#543114"/>
-                  <line x1="12" y1="18" x2="35" y2="18" stroke="#361a07" strokeWidth="2.5" />
-                  <line x1="22" y1="24" x2="48" y2="24" stroke="#361a07" strokeWidth="2.5" />
+                  {/* Fallen mossy tree log trunk */}
+                  <rect x="2" y="10" width="61" height="20" fill="url(#log-body)" rx="5" stroke="#0c0d14" strokeWidth="2" />
+                  {/* Log core and bark lines */}
+                  <ellipse cx="61" cy="20" rx="3.5" ry="10" fill="#8b5a2b" stroke="#0c0d14" strokeWidth="1" />
+                  <ellipse cx="61" cy="20" rx="1.5" ry="5" fill="#3d220f" />
+                  <ellipse cx="3" cy="20" rx="3" ry="10" fill="#3d220f" />
+                  
+                  {/* Bark cracks and detail rings */}
+                  <line x1="8" y1="16" x2="48" y2="16" stroke="#1c1005" strokeWidth="1.5" />
+                  <line x1="14" y1="24" x2="52" y2="24" stroke="#1c1005" strokeWidth="1.5" />
+                  
+                  {/* Beautiful vibrant green forest moss */}
+                  <path d="M6 10 C 14 6, 22 7, 30 10 C 38 7, 46 6, 54 10 Z" fill="url(#moss-grad)" stroke="#0c0d14" strokeWidth="0.8" />
+                  
+                  {/* Sprouting vines and weeds */}
+                  <circle cx="16" cy="11" r="2.5" fill="#15803d" />
+                  <circle cx="28" cy="12" r="3" fill="#166534" />
+                  <circle cx="44" cy="11" r="2.5" fill="#15803d" />
                 </svg>
               )}
 
               {obs.type === 'rock' && (
                 <svg width="100%" height="100%" viewBox="0 0 55 45" xmlns="http://www.w3.org/2000/svg">
                   <defs>
-                    <radialGradient id="rock-grad" cx="35%" cy="30%" r="70%"><stop offset="0%" stop-color="#abb6c7"/><stop offset="50%" stop-color="#5f6b7c"/><stop offset="100%" stop-color="#313945"/></radialGradient>
+                    <linearGradient id="boulder-grad" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stop-color="#78716c"/>
+                      <stop offset="50%" stop-color="#44403c"/>
+                      <stop offset="100%" stop-color="#1c1917"/>
+                    </linearGradient>
+                    <linearGradient id="rock-moss" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#4ade80"/>
+                      <stop offset="100%" stop-color="#166534"/>
+                    </linearGradient>
                   </defs>
-                  <path d="M22 2 Q 42 6 52 18 Q 57 41 33 43 Q 7 43 5 31 Q 2 13 22 2 Z" fill="url(#rock-grad)"/>
-                  <path d="M22 6 L 26 15 L 18 25" stroke="#1d2228" strokeWidth="2.5" fill="none" />
-                  <path d="M38 10 L 32 20 L 42 32" stroke="#1d2228" strokeWidth="2.5" fill="none" />
+                  {/* Spooky granite boulder shape */}
+                  <polygon points="27,2 48,15 52,35 34,43 14,41 3,25 9,10" fill="url(#boulder-grad)" stroke="#0c0d14" strokeWidth="2.2" />
+                  {/* Forest lichen and moss coating */}
+                  <polygon points="27,2 48,15 36,18 20,12 9,10" fill="url(#rock-moss)" opacity="0.9" stroke="#0c0d14" strokeWidth="0.8" />
+                  {/* Granite clefts and erosion cracks */}
+                  <line x1="3" y1="25" x2="28" y2="24" stroke="#1c1917" strokeWidth="1.8" />
+                  <line x1="9" y1="10" x2="28" y2="24" stroke="#1c1917" strokeWidth="1.8" />
+                  <line x1="48" y1="15" x2="28" y2="24" stroke="#1c1917" strokeWidth="1.8" />
+                  <line x1="34" y1="43" x2="28" y2="24" stroke="#1c1917" strokeWidth="1.8" />
+                  <circle cx="15" cy="30" r="3" fill="#15803d" opacity="0.8" />
+                  <circle cx="42" cy="28" r="2" fill="#166534" opacity="0.8" />
                 </svg>
               )}
 
               {obs.type === 'pit' && (
-                <div 
-                  className="absolute inset-0 rounded-lg flex flex-col items-center justify-center border-x-4 border-slate-700 bg-black/90 shadow-[inset_0_10px_20px_rgba(0,255,255,0.7)]"
-                >
-                  <div className="w-[85%] h-2.5 bg-cyan-400 animate-pulse rounded-full opacity-90 shadow-[0_0_12px_#00ffff]" />
-                  <span className="text-[8px] font-mono text-cyan-300 font-black animate-pulse uppercase mt-1 tracking-widest">ENERGIA</span>
-                </div>
+                <svg width="100%" height="100%" viewBox="0 0 85 36" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <radialGradient id="forest-pit" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stop-color="#020306"/>
+                      <stop offset="78%" stop-color="#0d110f"/>
+                      <stop offset="100%" stop-color="#1b2e1e"/>
+                    </radialGradient>
+                    <linearGradient id="grass-pit" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#22c55e"/>
+                      <stop offset="100%" stop-color="#14532d"/>
+                    </linearGradient>
+                  </defs>
+                  {/* Grassy soil frame outline */}
+                  <ellipse cx="42.5" cy="18" rx="42.5" ry="18" fill="url(#grass-pit)" stroke="#0c0d14" strokeWidth="1.5" />
+                  {/* Hollow cavern abysm shadow */}
+                  <ellipse cx="42.5" cy="18" rx="36" ry="12.5" fill="url(#forest-pit)" stroke="#0c0d14" strokeWidth="2" />
+                  {/* Exposed roots wrapping the edge */}
+                  <path d="M5 14 Q 22 24 40 16" stroke="#40250d" strokeWidth="3" fill="none" />
+                  <path d="M45 15 Q 65 8 80 16" stroke="#2a1605" strokeWidth="2.5" fill="none" />
+                  
+                  {/* Tufts of wild blades of grass */}
+                  <path d="M12 10 L 14 2 L 18 11" stroke="#15803d" strokeWidth="1.5" fill="none" />
+                  <path d="M72 10 L 75 3 L 78 12" stroke="#15803d" strokeWidth="1.5" fill="none" />
+                </svg>
               )}
 
               {obs.type === 'branch' && (
-                <svg width="100%" height="100%" viewBox="0 0 90 45" xmlns="http://www.w3.org/2000/svg">
+                <svg width="100%" height="100%" viewBox="0 0 90 40" xmlns="http://www.w3.org/2000/svg">
                   <defs>
-                    <linearGradient id="br-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#593417"/><stop offset="100%" stop-color="#2c1606"/></linearGradient>
-                    <radialGradient id="lf-grad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#52ae58"/><stop offset="100%" stop-color="#1e5422"/></radialGradient>
+                    <linearGradient id="branch-body" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stop-color="#5c3818"/>
+                      <stop offset="100%" stop-color="#2a1605"/>
+                    </linearGradient>
+                    <radialGradient id="leaves-green" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stop-color="#4ade80"/>
+                      <stop offset="100%" stop-color="#14532d"/>
+                    </radialGradient>
                   </defs>
-                  <path d="M0 2 H90 V14 Q 45 22 0 14 Z" fill="url(#br-grad)" />
-                  <circle cx="20" cy="24" r="14" fill="url(#lf-grad)"/>
-                  <circle cx="50" cy="28" r="16" fill="url(#lf-grad)"/>
-                  <circle cx="78" cy="20" r="12" fill="url(#lf-grad)"/>
-                  <line x1="20" y1="2" x2="20" y2="24" stroke="#593417" strokeWidth="2" />
-                  <line x1="50" y1="2" x2="50" y2="28" stroke="#593417" strokeWidth="2" />
+                  {/* Thick heavy oak wood branch spanning across */}
+                  <path d="M0 6 Q 45 16 90 4" stroke="url(#branch-body)" strokeWidth="8.5" fill="none" strokeLinecap="round" />
+                  <path d="M30 11 Q 48 24 55 24" stroke="url(#branch-body)" strokeWidth="4.5" fill="none" strokeLinecap="round" />
+                  
+                  {/* Fluffy forest leaf canopy clusters hanging low */}
+                  <circle cx="20" cy="12" r="10.5" fill="url(#leaves-green)" stroke="#0c0d14" strokeWidth="0.8" />
+                  <circle cx="48" cy="22" r="13" fill="url(#leaves-green)" stroke="#0c0d14" strokeWidth="1" />
+                  <circle cx="58" cy="20" r="11" fill="url(#leaves-green)" stroke="#0c0d14" strokeWidth="0.8" />
+                  <circle cx="78" cy="10" r="9.5" fill="url(#leaves-green)" stroke="#0c0d14" strokeWidth="0.8" />
+                  
+                  {/* Strangling vines dripping down */}
+                  <path d="M20 18 Q 18 28 22 34" stroke="#166534" strokeWidth="1.5" fill="none" />
+                  <path d="M54 28 Q 58 35 56 39" stroke="#15803d" strokeWidth="1.5" fill="none" opacity="0.8" />
                 </svg>
               )}
             </div>
@@ -1189,19 +1253,22 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           transform: rotate(35deg) !important;
         }
         .crouching .atrain-svg {
-          transform: translateY(30px) rotate(18deg);
+          transform: translateY(16px);
         }
         .crouching .at-torso-group {
-          transform: rotate(18deg) translateY(3px) !important;
+          transform: rotate(25deg) translate(2px, 3px) !important;
         }
         .crouching .at-leg-front {
-          transform: rotate(80deg) translate(-4px, -11px) !important;
+          transform: rotate(-55deg) translate(3px, -4px) !important;
         }
         .crouching .at-leg-back {
-          transform: rotate(-60deg) translate(6px, -4px) !important;
+          transform: rotate(55deg) translate(-2px, -4px) !important;
         }
         .crouching .at-arm {
-          transform: rotate(-95deg) translateY(-4px) !important;
+          transform: rotate(-75deg) translate(1px, -1px) !important;
+        }
+        .crouching .at-arm-back {
+          transform: rotate(75deg) translate(-1px, -1px) !important;
         }
         .animate-spin-slow {
           animation: spin 5s linear infinite;
