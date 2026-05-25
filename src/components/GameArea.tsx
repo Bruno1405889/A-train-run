@@ -112,6 +112,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const itemsRef = useRef<ItemInstance[]>([]);
   const particlesRef = useRef<ParticleInstance[]>([]);
   const lastObstacleTypeRef = useRef<string>('');
+  
+  // Track array lengths to avoid doing setState every frame
+  const prevObsLenRef = useRef(0);
+  const prevItemsLenRef = useRef(0);
 
   // Shield Invulnerabilities and V1 State Refs 
   const shieldActiveRef = useRef(false);
@@ -132,7 +136,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   // UI state updates maps
   const [activeObstacleList, setActiveObstacleList] = useState<ObstacleInstance[]>([]);
   const [activeItemList, setActiveItemList] = useState<ItemInstance[]>([]);
-  const [activeParticleList, setActiveParticleList] = useState<ParticleInstance[]>([]);
 
   // Keybindings listeners
   useEffect(() => {
@@ -263,7 +266,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const gameStep = () => {
     if (isDeadRef.current) {
       updateParticles();
-      setActiveParticleList([...particlesRef.current]);
       loopRef.current = requestAnimationFrame(gameStep);
       return;
     }
@@ -376,9 +378,25 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (!isRunning && pCL.contains('running')) pCL.remove('running');
     }
 
-    // Synchronously render arrays
-    setActiveObstacleList([...obstaclesRef.current]);
-    setActiveItemList([...itemsRef.current]);
+    // Synchronously render positions via DOM to avoid React Virtual DOM thrashing (solves lag!)
+    for (let i = 0; i < obstaclesRef.current.length; i++) {
+       const el = document.getElementById(`obs-${obstaclesRef.current[i].id}`);
+       if (el) el.style.transform = `translateX(${obstaclesRef.current[i].x}px)`;
+    }
+    for (let i = 0; i < itemsRef.current.length; i++) {
+       const el = document.getElementById(`item-${itemsRef.current[i].id}`);
+       if (el) el.style.transform = `translateX(${itemsRef.current[i].x}px)`;
+    }
+
+    // Only update React arrays if the length has changed
+    if (obstaclesRef.current.length !== prevObsLenRef.current) {
+        prevObsLenRef.current = obstaclesRef.current.length;
+        setActiveObstacleList([...obstaclesRef.current]);
+    }
+    if (itemsRef.current.length !== prevItemsLenRef.current) {
+        prevItemsLenRef.current = itemsRef.current.length;
+        setActiveItemList([...itemsRef.current]);
+    }
 
     // Gradual difficulty speed boost
     if (globalCyclesRef.current % 450 === 0) {
@@ -657,6 +675,8 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       });
     }
 
+    const container = document.getElementById('particles-container');
+
     // Move logic
     for (let i = particlesRef.current.length - 1; i >= 0; i--) {
       const p = particlesRef.current[i];
@@ -667,10 +687,28 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       if (p.life <= 0 || p.opacity <= 0) {
         particlesRef.current.splice(i, 1);
+        if (container) {
+          const node = document.getElementById(`p-${p.id}`);
+          if (node) node.remove();
+        }
+      } else if (container) {
+        let node = document.getElementById(`p-${p.id}`);
+        if (!node) {
+          node = document.createElement('div');
+          node.id = `p-${p.id}`;
+          node.className = 'absolute z-[25] rounded-full pointer-events-none transform-gpu mix-blend-screen';
+          node.style.width = `${p.size}px`;
+          node.style.height = `${p.size}px`;
+          node.style.backgroundColor = p.color;
+          node.style.left = '0px';
+          node.style.bottom = '0px';
+          if (p.size > 6) node.style.boxShadow = `0 0 5px ${p.color}`;
+          container.appendChild(node);
+        }
+        node.style.transform = `translate3d(${p.x}px, -${p.y}px, 0)`;
+        node.style.opacity = p.opacity.toString();
       }
     }
-
-    setActiveParticleList([...particlesRef.current]);
   };
 
   const triggerGameOver = () => {
@@ -699,7 +737,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
     }
 
     // Force one last render to guarantee explosion setup locally
-    setActiveParticleList([...particlesRef.current]);
 
     setTimeout(() => {
       onGameOver(scoreRef.current);
@@ -820,42 +857,36 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           {/* Golden Eagle shoulder traps on Back */}
           <ellipse cx="27" cy="18" rx="4.5" ry="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="1"/>
           
-          {/* Stylish and proportioned muscular Back Arm */}
-          <g id="back-arm">
-            {/* Bulging bicep */}
-            <path d="M25 18 C 24 22, 25.5 29, 28.5 29 C 31 29, 31 22, 29 18 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1" opacity="0.9" />
-            {/* Red leather glove cuff */}
-            <path d="M26.5 28 C 26 33, 27.5 37, 29.5 37 C 31 37, 31 32, 29 28 Z" fill="#aa000d" stroke="#010206" strokeWidth="1" />
-            {/* Gold trim glove band */}
-            <line x1="26" y1="29" x2="30" y2="30" stroke="url(#hl-gold)" strokeWidth="1" />
+          {/* Stylish muscular Back Arm (A-Train proportion) */}
+          <g id="back-arm" style={{ transformOrigin: '23px 21px', transform: 'rotate(-25deg) translateY(2px) translateX(10px)', filter: 'brightness(0.65)' }}>
+            <rect x="12.5" y="20" width="5.5" height="14" fill="url(#hl-suit)" rx="2.5" stroke="#010206" strokeWidth="1"/>
+            <ellipse cx="15px" cy="34" rx="3.5" ry="3.5" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
+            <ellipse cx="15px" cy="21" rx="3.5" ry="3.5" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
           </g>
 
-          {/* Fully redesigned Muscular Legs */}
-          {/* Left thigh (muscular path) */}
-          <path d="M13.5 39 C 11.5 42, 12.5 48, 16.5 48 C 18 48, 18.5 42, 17.5 39 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
-          {/* Right thigh (muscular path) */}
-          <path d="M21 39 C 19 42, 20.5 48, 24.5 48 C 26 48, 26 42, 25 39 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
-          
-          {/* Red Vought Boots with realistic curves and gold calf borders */}
-          {/* Left Boot */}
-          <path d="M12.5 47 C 11.5 50, 12 55, 12 58 C 14 58.5, 17 58, 17.5 55 C 16.5 51, 15.5 47, 12.5 47 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
-          <path d="M12.5 48.5 Q 14.5 50 16 48.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
-          {/* Right Boot */}
-          <path d="M20 47 C 19 50, 19.5 55, 19.5 58 C 21.5 58.5, 24.5 58, 25 55 C 24 51, 23 47, 20 47 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
-          <path d="M19.8 48.5 Q 22 50 23.5 48.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
+          {/* Fully redesigned Legs (Straightened, matching animation structure) */}
+          <g>
+            <rect x="13.5" y="38" width="5.5" height="15" fill="url(#hl-suit)" rx="2" stroke="#010206" strokeWidth="1.2"/>
+            {/* Red Vought Boots */}
+            <path d="M12.5 49 Q 17 47.5 20 53 Q 17 55.5 12.5 54.5 Z" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
+            <rect x="12" y="52.5" width="7.5" height="2" fill="url(#hl-gold)" rx="1" stroke="#010206" strokeWidth="0.5"/>
+          </g>
+
+          <g>
+            <rect x="21" y="38" width="5.5" height="15" fill="url(#hl-suit)" rx="2" stroke="#010206" strokeWidth="1.2"/>
+            {/* Red Vought Boots */}
+            <path d="M20 49 Q 24.5 47.5 27.5 53 Q 24.5 55.5 20 54.5 Z" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
+            <rect x="19.5" y="52.5" width="7.5" height="2" fill="url(#hl-gold)" rx="1" stroke="#010206" strokeWidth="0.5"/>
+          </g>
           
           {/* Torso/Chest muscular definition */}
           <rect x="11.5" y="18" width="17" height="23" fill="url(#hl-suit)" rx="4.5" stroke="#010206" strokeWidth="1.5"/>
           <rect x="13.5" y="37" width="13" height="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="0.8"/> {/* Golden grid belt */}
           
-          {/* Muscular and powerful Front Arm with bicep flex and glove details */}
+          {/* Muscular and powerful Front Arm (A-Train style arm proportion) */}
           <g id="front-arm" transform="rotate(-65 14 20)">
-            {/* Flexed bicep */}
-            <path d="M11 17 C 9 20, 11 28, 14.5 28 C 17 28, 16 20, 15 17 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
-            {/* Detailed red glove */}
-            <path d="M11.5 27 C 10.5 32, 11.5 38, 14 38 C 16 38, 16.5 32, 14.5 27 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
-            {/* Glove gold outline */}
-            <path d="M11 28.5 C 13 29, 15 28, 15.5 26.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
+            <rect x="10.5" y="20" width="5.5" height="14" fill="url(#hl-suit)" rx="2.5" stroke="#010206" strokeWidth="1.2"/>
+            <ellipse cx="13.25" cy="34" rx="3.5" ry="3.5" fill="#cc0010" stroke="#010206" strokeWidth="1.2"/>
           </g>
           <ellipse cx="13" cy="18" rx="4.5" ry="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="1"/>
 
@@ -1002,8 +1033,9 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
             {/* Sleek silver high-tech helmet with shiny visor */}
             <rect x="16" y="5" width="10" height="12.5" fill="url(#at-skin)" rx="4" stroke="#020206" strokeWidth="1.2"/>
             
-            {/* Buzz Cut Hair (Short, cropped to the head like in the series) */}
-            <path d="M15.5 5 C 15.5 3, 26.5 3, 26.5 5 Z" fill="#111111" stroke="#020206" strokeWidth="1.2"/>
+            {/* Buzz Cut Hair (Short, clean fade edge-up, closely cropped like the series) */}
+            <path d="M15.5 6 C 15.5 2.5, 26.5 2.5, 26.5 6 C 25.5 6, 24.5 5.2, 21 5.2 C 17.5 5.2, 16.5 6, 15.5 6 Z" fill="#111111" stroke="#020206" strokeWidth="1.2"/>
+            <path d="M15.5 6 V 8 M 26.5 6 V 8" stroke="#111111" strokeWidth="1" />
             
             {/* White and blue stylish sportswear sunglasses (A-train series style) */}
             <rect x="16" y="7" width="10" height="4" fill="#f0f0f0" rx="2" stroke="#020206" strokeWidth="1" />
@@ -1018,6 +1050,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           return (
             <div 
               key={obs.id}
+              id={`obs-${obs.id}`}
               className="absolute will-change-transform z-[15]"
               style={{
                 width: `${obs.width}px`,
@@ -1152,6 +1185,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           return (
             <div
               key={item.id}
+              id={`item-${item.id}`}
               className="absolute z-[15] pointer-events-none"
               style={{
                 width: `${item.width}px`,
@@ -1188,27 +1222,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       </div>
 
       {/* PARTICLES ENGINE */}
-      <div id="particles-container">
-        {activeParticleList.map((p) => {
-          return (
-            <div 
-              key={p.id}
-              className="absolute pointer-events-none rounded-full"
-              style={{
-                width: `${p.size}px`,
-                height: `${p.size}px`,
-                left: `${p.x}px`,
-                bottom: `${p.y}px`,
-                backgroundColor: p.color,
-                opacity: p.opacity,
-                // Only apply expensive CSS blur shadow filter to larger Compound V bubbles
-                boxShadow: p.size > 6 ? `0 0 5px ${p.color}` : 'none',
-                mixBlendMode: 'screen'
-              }}
-            />
-          );
-        })}
-      </div>
+      <div id="particles-container"></div>
 
       {/* Style Animations helpers */}
       <style>{`
