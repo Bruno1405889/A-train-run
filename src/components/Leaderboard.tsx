@@ -51,7 +51,7 @@ export default function Leaderboard({ onBack, currentUserId }: LeaderboardProps)
       ) : (
         isGuestUser && (
           <div className="mb-4 text-[10.5px] font-mono text-amber-400 bg-amber-950/45 border border-amber-500/25 rounded-xl p-3 text-center select-none">
-            ⚠️ Você está no modo <strong>Visitante</strong>. Rankings mundiais requerem login; seus recordes pessoais estão salvos apenas no navegador!
+            🚀 Seu recorde mundial é registrado sob o codinome de atleta informado!
           </div>
         )
       )}

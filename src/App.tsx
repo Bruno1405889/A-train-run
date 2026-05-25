@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { auth, googleProvider, signInWithPopup, signOut } from './firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
 import { submitScore, fetchUserPersonalBest, isFirebaseDummy } from './firebaseService';
 import { generateRandomNickname } from './components/VoughtNicknames';
 import { motion, AnimatePresence } from 'motion/react';
@@ -44,76 +42,43 @@ export default function App() {
   // Difficulty configurations (speed multipliers)
   const [speedMultiplier, setSpeedMultiplier] = useState(1.0);
 
-  // Handle Firebase auth state updates
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
-      setAuthLoading(true);
-      if (firebaseUser) {
-        const loggedUser: GameUser = {
-          uid: firebaseUser.uid,
-          displayName: firebaseUser.displayName || 'Corredor Anônimo',
-          photoURL: firebaseUser.photoURL || '',
-          isGuest: false
-        };
-        setUser(loggedUser);
+    // Check local guest sessions
+    const savedGuest = localStorage.getItem('atrain_guest_user');
+    if (savedGuest) {
+      try {
+        const guestObj = JSON.parse(savedGuest) as GameUser;
+        setUser(guestObj);
         setScreen('menu');
         
-        // Fetch Personal Best from Cloud Database
-        const cloudPb = await fetchUserPersonalBest(firebaseUser.uid);
-        setPersonalBest(cloudPb);
-      } else {
-        // No Google user, check local guest sessions
-        const savedGuest = localStorage.getItem('atrain_guest_user');
-        if (savedGuest) {
-          try {
-            const guestObj = JSON.parse(savedGuest) as GameUser;
-            setUser(guestObj);
-            setScreen('menu');
-            
-            // Fetch Personal Best from LocalStorage for Guests
-            const localPb = localStorage.getItem(`atrain_pb_${guestObj.displayName}`);
-            setPersonalBest(localPb ? parseInt(localPb, 10) : 0);
-          } catch (e) {
-            setUser(null);
-            setScreen('login');
-          }
-        } else {
-          setUser(null);
-          setScreen('login');
-        }
+        // Fetch Personal Best from LocalStorage
+        const localPb = localStorage.getItem(`atrain_pb_${guestObj.displayName}`);
+        setPersonalBest(localPb ? parseInt(localPb, 10) : 0);
+      } catch (e) {
+        setUser(null);
+        setScreen('login');
       }
-      setAuthLoading(false);
-    });
-
+    } else {
+      setUser(null);
+      setScreen('login');
+    }
+    
+    setAuthLoading(false);
     setGuestName(generateRandomNickname());
-
-    return () => unsubscribe();
   }, []);
 
-  // Google authentication popup
-  const handleGoogleLogin = async () => {
-    setErrorMessage(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage('Falha ao autenticar com o Google. Tente novamente.');
-    }
-  };
-
-  // Guest authentication login
   const handleGuestLogin = () => {
     const sanitized = guestName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '');
     if (!sanitized) {
-      setErrorMessage('Por favor, defina um apelido válido!');
+      setErrorMessage('Por favor, defina um nome válido!');
       return;
     }
     if (sanitized.length > 20) {
-      setErrorMessage('Escolha um apelido de no máximo 20 letras.');
+      setErrorMessage('Escolha um nome de no máximo 20 letras.');
       return;
     }
 
-    const guestId = `guest_${Math.random().toString(36).substring(2, 9)}`;
+    const guestId = `player_${Math.random().toString(36).substring(2, 9)}`;
     const guestUser: GameUser = {
       uid: guestId,
       displayName: sanitized,
@@ -130,14 +95,10 @@ export default function App() {
     setScreen('menu');
   };
 
-  const handleLogout = async () => {
-    if (user?.isGuest) {
-      localStorage.removeItem('atrain_guest_user');
-      setUser(null);
-      setScreen('login');
-    } else {
-      await signOut(auth);
-    }
+  const handleLogout = () => {
+    localStorage.removeItem('atrain_guest_user');
+    setUser(null);
+    setScreen('login');
   };
 
   const handleGenerateName = () => {
@@ -153,24 +114,21 @@ export default function App() {
     if (score > personalBest) {
       setPersonalBest(score);
       if (user) {
-        // Sync guest score locally
-        if (user.isGuest) {
-          localStorage.setItem(`atrain_pb_${user.displayName}`, score.toString());
-        }
+        localStorage.setItem(`atrain_pb_${user.displayName}`, score.toString());
       }
     }
 
     // Auto record valid high scores (> 3 meters) to Leaderboard
-    const shouldSubmit = score > 3 && user && (!user.isGuest || isFirebaseDummy());
+    const shouldSubmit = score > 3 && user;
     if (shouldSubmit) {
       setSubmitting(true);
       try {
         await submitScore({
-          userId: user.isGuest ? `guest_${user.displayName}` : user.uid,
+          userId: `guest_${user.displayName}`,
           username: user.displayName,
           photoURL: user.photoURL || '',
           score: score,
-          isGuest: user.isGuest
+          isGuest: true
         });
         setScoreSubmitted(true);
       } catch (err) {
@@ -202,7 +160,7 @@ export default function App() {
       {authLoading ? (
         <div className="flex flex-col items-center gap-4 z-20">
           <RefreshCw className="animate-spin text-cyan-400" size={40} />
-          <span className="font-mono text-xs tracking-wider text-cyan-400 animate-pulse uppercase">Sincronizando com o Servidor Vought...</span>
+          <span className="font-mono text-xs tracking-wider text-cyan-400 animate-pulse uppercase">Carregando Sistema...</span>
         </div>
       ) : (
         <AnimatePresence mode="wait">
@@ -238,42 +196,10 @@ export default function App() {
               {/* Login Actions Option cards */}
               <div className="flex flex-col gap-4">
                 
-                {/* Method A: Google Connection */}
-                <button
-                  onClick={handleGoogleLogin}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 border-2 border-cyan-400/80 text-white font-mono text-xs tracking-widest font-extrabold rounded-xl shadow-lg transition duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer uppercase"
-                >
-                  <svg className="w-4 h-4 shrink-0 text-cyan-200" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  Conectar via Google
-                </button>
-
-                <div className="flex items-center my-1 select-none">
-                  <div className="flex-1 h-[1px] bg-slate-800" />
-                  <span className="px-3 font-mono text-[9px] text-slate-500 tracking-wider">OU REGISTRE VISITANTE</span>
-                  <div className="flex-1 h-[1px] bg-slate-800" />
-                </div>
-
-                {/* Method B: Fast Guest profile */}
+                {/* Local Guest profile */}
                 <div className="bg-slate-950 p-4 rounded-xl border-2 border-slate-800 text-left">
                   <label className="block text-[9.5px] font-mono text-slate-400 uppercase tracking-widest mb-2">
-                    NICKNAME DO ATLETA:
+                    CRIAR SUA CONTA LOCAL:
                   </label>
                   
                   <div className="flex gap-2">
@@ -281,7 +207,7 @@ export default function App() {
                       type="text"
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
-                      placeholder="Codinome Vought..."
+                      placeholder="Nome do corredor..."
                       maxLength={20}
                       className="flex-1 bg-slate-900 border border-slate-700 px-3 py-2 rounded-lg text-xs font-mono text-slate-100 outline-none focus:border-cyan-400 transition"
                     />
@@ -296,9 +222,9 @@ export default function App() {
 
                   <button
                     onClick={handleGuestLogin}
-                    className="w-full mt-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-mono text-[11px] tracking-widest rounded-lg border border-slate-700 transition duration-150 active:scale-95 uppercase font-bold"
+                    className="w-full mt-3 py-3 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-mono text-[11px] tracking-widest rounded-xl border-2 border-cyan-400/80 transition duration-150 active:scale-95 uppercase font-bold"
                   >
-                    Iniciar modo Visitante
+                    Iniciar Jogo
                   </button>
                 </div>
               </div>
@@ -316,6 +242,10 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <span>Abaixar (Esquivar do Laser)</span>
                     <span className="font-mono text-[9.5px] bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-cyan-400 select-all font-bold">SETA BAIXO / S</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Ativar V-1 (Invencibilidade 3s)</span>
+                    <span className="font-mono text-[9.5px] bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-fuchsia-400 select-all font-bold">TECLA E</span>
                   </div>
                 </div>
               </div>
@@ -352,11 +282,7 @@ export default function App() {
                       {user.displayName}
                     </span>
                     <div className="mt-0.5 select-none text-[8px] font-mono uppercase tracking-widest">
-                      {user.isGuest ? (
-                        <span className="bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded text-amber-400">Atleta Visitante</span>
-                      ) : (
-                        <span className="bg-cyan-500/15 border border-cyan-500/20 px-2 py-0.5 rounded text-cyan-300 font-bold">Inscrito Vought Elite</span>
-                      )}
+                      <span className="bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded text-amber-400">Atleta Vought</span>
                     </div>
                   </div>
                 </div>
@@ -364,7 +290,7 @@ export default function App() {
                 <button 
                   onClick={handleLogout}
                   className="p-1.5 text-slate-500 hover:text-red-400 rounded transition duration-150 active:scale-95"
-                  title="Alterar Cadastro"
+                  title="Sair"
                 >
                   <LogOut size={16} />
                 </button>
@@ -394,14 +320,6 @@ export default function App() {
                 >
                   <Play size={15} strokeWidth={3} className="text-white fill-white" />
                   Iniciar Corrida
-                </button>
-
-                <button
-                  onClick={() => setScreen('leaderboard')}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-slate-300 hover:text-white font-mono text-xs tracking-wider rounded-xl transition duration-155 active:scale-95 cursor-pointer"
-                >
-                  <Trophy size={14} className="text-yellow-400" />
-                  Placar de Líderes Geral
                 </button>
               </div>
 
@@ -484,10 +402,8 @@ export default function App() {
                   </span>
                 ) : lastScore <= 3 ? (
                   <span className="text-slate-500 tracking-wider uppercase">Pontuação mínima não alcançada para o ranking.</span>
-                ) : user.isGuest && !isFirebaseDummy() ? (
-                  <span className="text-amber-400 tracking-wider uppercase font-bold">Modo Visitante: Recorde de {personalBest}m salvo localmente.</span>
                 ) : (
-                  <span className="text-red-400 tracking-wider uppercase">Erro ao conectar com servidor Vought.</span>
+                  <span className="text-amber-400 tracking-wider uppercase font-bold">Recorde de {personalBest}m salvo localmente.</span>
                 )}
               </div>
 
@@ -506,30 +422,7 @@ export default function App() {
                 >
                   Menu Inicial
                 </button>
-
-                <button
-                  onClick={() => setScreen('leaderboard')}
-                  className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border-2 border-slate-800 text-cyan-400 hover:text-cyan-300 font-mono text-xs tracking-wider rounded-xl transition duration-150 active:scale-95 cursor-pointer uppercase"
-                >
-                  Ver Placar Geral
-                </button>
               </div>
-            </motion.div>
-          )}
-
-          {/* SCREEN: SCOREBOARD LEADERBOARD */}
-          {screen === 'leaderboard' && (
-            <motion.div 
-              key="leaderboard"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              className="z-10"
-            >
-              <Leaderboard 
-                currentUserId={user ? user.uid : null}
-                onBack={() => setScreen(user ? 'menu' : 'login')}
-              />
             </motion.div>
           )}
         </AnimatePresence>

@@ -66,7 +66,7 @@ const ZONES: ZoneType[] = [
     bgGradient: "linear-gradient(to bottom, #020307, #060c1c, #0b162c)",
     groundBorder: "#15803d",
     groundBg: "linear-gradient(to bottom, #142517, #081009)",
-    particleColor: "#22c55e"
+    particleColor: "#00bfff"
   }
 ];
 
@@ -75,13 +75,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const playerRef = useRef<HTMLDivElement>(null);
   
   // Game reactive state
-  const [currentScore, setCurrentScore] = useState(0);
   const [multiplier, setMultiplier] = useState(1);
   const [multiplierActive, setMultiplierActive] = useState(false);
   const [laserWarning, setLaserWarning] = useState(false);
   const [laserActive, setLaserActive] = useState(false);
   const [shieldActive, setShieldActive] = useState(false); 
-  const [jumpCount, setJumpCount] = useState(0);
 
   // Runway zones/phases state
   const [currentZone, setCurrentZone] = useState<ZoneType>(ZONES[0]);
@@ -115,9 +113,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const particlesRef = useRef<ParticleInstance[]>([]);
   const lastObstacleTypeRef = useRef<string>('');
 
-  // Shield Invulnerabilities State Refs (to solve core React loop stale-closures)
+  // Shield Invulnerabilities and V1 State Refs 
   const shieldActiveRef = useRef(false);
   const shieldTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
+  const isDeadRef = useRef(false);
+  const v1ChargesRef = useRef(0);
 
   // Key tracking
   const keysPressedRef = useRef<{ [key: string]: boolean }>({});
@@ -150,31 +150,29 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           playerVYRef.current = 13.0; 
           playerGroundedRef.current = false;
           jumpCountRef.current = 1;
-          setJumpCount(1);
           playJumpSound();
           createJumpRing(260 + 22, 35);
-        } else if (jumpCountRef.current === 1) {
-          // Double Flip jump
-          playerVYRef.current = 9.5;
-          jumpCountRef.current = 2;
-          setJumpCount(2);
-          playJumpSound();
-          createJumpRing(260 + 22, 35 + playerYRef.current);
+        }
+      }
+
+      // V1 Manual Activation
+      if (e.code === 'KeyE') {
+        if (v1ChargesRef.current > 0 && !shieldActiveRef.current && isPlaying && !isDeadRef.current) {
+          v1ChargesRef.current -= 1;
+          const v1el = document.getElementById('v1-count');
+          if (v1el) v1el.innerText = v1ChargesRef.current.toString();
           
-          // Double jump visual burst
-          for (let i = 0; i < 8; i++) {
-            particlesRef.current.push({
-              id: Math.random().toString(),
-              x: 260 + 22,
-              y: 35 + playerYRef.current,
-              vx: -12 + Math.random() * 4,
-              vy: (Math.random() - 0.5) * 6,
-              size: Math.random() * 6 + 3,
-              color: '#ffc600',
-              opacity: 0.9,
-              life: 15
-            });
-          }
+          shieldActiveRef.current = true;
+          setShieldActive(true);
+          playLaserChargeSound();
+          
+          if (shieldTimeoutRef.current) clearTimeout(shieldTimeoutRef.current);
+          shieldTimeoutRef.current = setTimeout(() => {
+            shieldActiveRef.current = false;
+            setShieldActive(false);
+          }, 3000);
+          
+          createCompoundVFlash();
         }
       }
     };
@@ -196,7 +194,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   useEffect(() => {
     if (isPlaying) {
       scoreRef.current = 0;
-      setCurrentScore(0);
       curSpeedRef.current = 9.8;
       globalCyclesRef.current = 0;
       
@@ -218,7 +215,15 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       setLaserWarning(false);
       setLaserActive(false);
       setShieldActive(false);
-      setJumpCount(0);
+
+      if (playerRef.current) {
+        playerRef.current.style.opacity = '1';
+      }
+
+      v1ChargesRef.current = 0;
+      isDeadRef.current = false;
+      const v1el = document.getElementById('v1-count');
+      if (v1el) v1el.innerText = '0';
 
       // Reset shield invincibility refs
       shieldActiveRef.current = false;
@@ -256,6 +261,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
   // Main engine step loop
   const gameStep = () => {
+    if (isDeadRef.current) {
+      updateParticles();
+      setActiveParticleList([...particlesRef.current]);
+      loopRef.current = requestAnimationFrame(gameStep);
+      return;
+    }
+
     globalCyclesRef.current += 1;
     const currentSpeed = curSpeedRef.current * speedMultiplier;
 
@@ -292,7 +304,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         playerVYRef.current = 0;
         playerGroundedRef.current = true;
         jumpCountRef.current = 0;
-        setJumpCount(0);
       }
     }
 
@@ -349,24 +360,20 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
     if (playerRef.current) {
       playerRef.current.style.bottom = `${29 + playerYRef.current}px`;
       
-      // Sync classes instantly
-      if (playerCrouchingRef.current) {
-        playerRef.current.classList.add('crouching');
-        playerRef.current.classList.remove('running');
-      } else {
-        playerRef.current.classList.remove('crouching');
-      }
+      // Sync classes optimally to avoid Thrashing
+      const pCL = playerRef.current.classList;
+      const isCrouching = playerCrouchingRef.current;
+      const isJumping = !playerGroundedRef.current;
+      const isRunning = playerGroundedRef.current && !isCrouching;
 
-      if (!playerGroundedRef.current) {
-        playerRef.current.classList.add('jumping');
-        playerRef.current.classList.remove('running');
-      } else {
-        playerRef.current.classList.remove('jumping');
-      }
-
-      if (playerGroundedRef.current && !playerCrouchingRef.current) {
-        playerRef.current.classList.add('running');
-      }
+      if (isCrouching && !pCL.contains('crouching')) pCL.add('crouching');
+      if (!isCrouching && pCL.contains('crouching')) pCL.remove('crouching');
+      
+      if (isJumping && !pCL.contains('jumping')) pCL.add('jumping');
+      if (!isJumping && pCL.contains('jumping')) pCL.remove('jumping');
+      
+      if (isRunning && !pCL.contains('running')) pCL.add('running');
+      if (!isRunning && pCL.contains('running')) pCL.remove('running');
     }
 
     // Synchronously render arrays
@@ -381,7 +388,6 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
     // Tick score meter
     if (globalCyclesRef.current % 5 === 0) {
       scoreRef.current += multiplier;
-      setCurrentScore(scoreRef.current);
     }
 
     loopRef.current = requestAnimationFrame(gameStep);
@@ -464,7 +470,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
     }
 
     // Compound V Floating collectibles serum bottle
-    if (itemsRef.current.length === 0 && globalCyclesRef.current % 460 === 0) {
+    if (itemsRef.current.length === 0 && globalCyclesRef.current % 500 === 0 && Math.random() < 1.2 / speedMultiplier) {
       itemsRef.current.push({
         id: Math.random().toString(36).substring(2, 9),
         type: 'compound-v',
@@ -537,16 +543,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (iLeft < pRight && iRight > pLeft && pTop > iBottom && pBottom < iTop) {
         playCollectSound();
         
-        // True 3-second V1 Shield invulnerability setup
-        shieldActiveRef.current = true;
-        setShieldActive(true);
-        if (shieldTimeoutRef.current) {
-          clearTimeout(shieldTimeoutRef.current);
-        }
-        shieldTimeoutRef.current = setTimeout(() => {
-          shieldActiveRef.current = false;
-          setShieldActive(false);
-        }, 3000);
+        // Manual V1 Charge addition
+        v1ChargesRef.current += 1;
+        const v1el = document.getElementById('v1-count');
+        if (v1el) v1el.innerText = v1ChargesRef.current.toString();
 
         setMultiplier(3);
         setMultiplierActive(true);
@@ -625,17 +625,18 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   };
 
   const createSparks = (x: number, y: number, color: string) => {
-    for (let i = 0; i < 5; i++) {
+    // Highly optimized particle count to eliminate layout overhead and preserve 60FPS
+    for (let i = 0; i < 2; i++) {
       particlesRef.current.push({
         id: Math.random().toString(),
         x,
         y,
-        vx: (Math.random() - 0.6) * 11 - 3,
-        vy: (Math.random() - 0.5) * 4,
-        size: Math.random() * 5 + 2,
+        vx: (Math.random() - 0.6) * 10 - 2,
+        vy: (Math.random() - 0.5) * 3,
+        size: Math.random() * 4 + 2,
         color,
         opacity: 1,
-        life: 14
+        life: 12
       });
     }
   };
@@ -674,28 +675,35 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
   const triggerGameOver = () => {
     playHitSound();
-    if (loopRef.current) cancelAnimationFrame(loopRef.current);
+    isDeadRef.current = true;
     
-    // Disperse massive sparks at death coordinate
-    for (let i = 0; i < 35; i++) {
-      particlesRef.current.push({
-        id: Math.random().toString(),
-        x: 260 + 22,
-        y: 35 + playerYRef.current + 45,
-        vx: (Math.random() - 0.5) * 15,
-        vy: (Math.random() - 0.3) * 13,
-        size: Math.random() * 9 + 4,
-        color: i % 2 === 0 ? '#ef4444' : '#00ffd8',
-        opacity: 1,
-        life: 40
-      });
+    // Blood Disintegration
+    if (playerRef.current) {
+      playerRef.current.style.opacity = '0';
+      
+      const pLeft = 260;
+      const pBottom = 29 + playerYRef.current;
+      for (let s = 0; s < 50; s++) {
+        particlesRef.current.push({
+          id: Math.random().toString(),
+          x: pLeft + playerWidthRef.current / 2,
+          y: pBottom + playerHeightRef.current / 2,
+          vx: (Math.random() - 0.5) * 16,
+          vy: Math.random() * 12 + 2, 
+          size: Math.random() * 7 + 4,
+          color: '#ef4444', 
+          opacity: 1,
+          life: 45 + Math.random() * 20
+        });
+      }
     }
-    
+
+    // Force one last render to guarantee explosion setup locally
     setActiveParticleList([...particlesRef.current]);
 
     setTimeout(() => {
       onGameOver(scoreRef.current);
-    }, 850);
+    }, 1100); // 1.1 seconds death window to show realistic splat
   };
 
   return (
@@ -743,10 +751,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       {/* Top dashboard panels */}
       <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center">
         <div className="flex gap-4 font-mono">
-          <div className="bg-slate-950/80 border-2 border-cyan-500 rounded-lg px-3 py-1.5 flex items-center gap-2 select-none shadow-lg">
-            <Zap size={14} className="text-cyan-400 animate-pulse" />
-            <span className="text-white text-xs tracking-wider">Distância:</span>
-            <span className="text-cyan-400 text-sm font-extrabold">{currentScore}m</span>
+          <div className="bg-slate-950/80 border-2 border-fuchsia-500 rounded-lg px-3 py-1.5 flex items-center gap-2 select-none shadow-lg">
+            <FlaskConical size={14} className="text-fuchsia-400 animate-pulse" />
+            <span className="text-white text-xs tracking-wider">V1 (Tecla E):</span>
+            <span id="v1-count" className="text-fuchsia-400 text-sm font-extrabold">0</span>
           </div>
 
           {multiplierActive && (
@@ -779,14 +787,14 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           animation: 'homelanderFly 2.2s infinite ease-in-out',
         }}
       >
-        <svg className="w-full h-full filter drop-shadow-[5px_22px_12px_rgba(0,0,0,0.55)]" viewBox="0 0 40 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg className="w-full h-full" viewBox="0 0 40 60" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <g id="hl-star"><polygon points="5,0 6.5,3.5 10,3.5 7,6 8,9.5 5,7.5 2,9.5 3,6 0,3.5 3.5,3.5" /></g>
-            <linearGradient id="hl-suit" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#071b42"/><stop offset="50%" stop-color="#144291"/><stop offset="100%" stop-color="#05122e"/></linearGradient>
-            <linearGradient id="hl-cape-grad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#800000"/><stop offset="40%" stop-color="#cc0010"/><stop offset="100%" stop-color="#660000"/></linearGradient>
-            <linearGradient id="hl-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffee55"/><stop offset="100%" stop-color="#b88300"/></linearGradient>
-            <linearGradient id="hl-skin" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ca8a65"/><stop offset="50%" stop-color="#f5caa6"/><stop offset="100%" stop-color="#aa663f"/></linearGradient>
-            <linearGradient id="hl-hair" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffeb99"/><stop offset="100%" stop-color="#d69c0d"/></linearGradient>
+            <linearGradient id="hl-suit" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#071b42"/><stop offset="50%" stopColor="#144291"/><stop offset="100%" stopColor="#05122e"/></linearGradient>
+            <linearGradient id="hl-cape-grad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#800000"/><stop offset="40%" stopColor="#cc0010"/><stop offset="100%" stopColor="#660000"/></linearGradient>
+            <linearGradient id="hl-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ffee55"/><stop offset="100%" stopColor="#b88300"/></linearGradient>
+            <linearGradient id="hl-skin" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#ca8a65"/><stop offset="50%" stopColor="#f5caa6"/><stop offset="100%" stopColor="#aa663f"/></linearGradient>
+            <linearGradient id="hl-hair" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#ffeb99"/><stop offset="100%" stopColor="#d69c0d"/></linearGradient>
           </defs>
           
           {/* Cape waves dynamically */}
@@ -812,49 +820,58 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           {/* Golden Eagle shoulder traps on Back */}
           <ellipse cx="27" cy="18" rx="4.5" ry="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="1"/>
           
-          {/* Back arm */}
+          {/* Stylish and proportioned muscular Back Arm */}
           <g id="back-arm">
-            <rect x="25" y="19" width="5.5" height="17" fill="url(#hl-suit)" rx="2" transform="rotate(22 26 19)" stroke="#010206" strokeWidth="1"/>
-            <rect x="25" y="29" width="5.5" height="7.5" fill="#cc0010" rx="1.5" transform="rotate(22 26 19)" stroke="#010206" strokeWidth="1"/>
+            {/* Bulging bicep */}
+            <path d="M25 18 C 24 22, 25.5 29, 28.5 29 C 31 29, 31 22, 29 18 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1" opacity="0.9" />
+            {/* Red leather glove cuff */}
+            <path d="M26.5 28 C 26 33, 27.5 37, 29.5 37 C 31 37, 31 32, 29 28 Z" fill="#aa000d" stroke="#010206" strokeWidth="1" />
+            {/* Gold trim glove band */}
+            <line x1="26" y1="29" x2="30" y2="30" stroke="url(#hl-gold)" strokeWidth="1" />
           </g>
 
-          {/* Detailed muscular legs */}
-          <rect x="13.5" y="40" width="5.5" height="15" fill="url(#hl-suit)" rx="2" stroke="#010206" strokeWidth="1.2"/>
-          <rect x="21" y="40" width="5.5" height="15" fill="url(#hl-suit)" rx="2" stroke="#010206" strokeWidth="1.2"/>
+          {/* Fully redesigned Muscular Legs */}
+          {/* Left thigh (muscular path) */}
+          <path d="M13.5 39 C 11.5 42, 12.5 48, 16.5 48 C 18 48, 18.5 42, 17.5 39 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
+          {/* Right thigh (muscular path) */}
+          <path d="M21 39 C 19 42, 20.5 48, 24.5 48 C 26 48, 26 42, 25 39 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
           
-          <path d="M12 47 Q 16 47 18 55 Q 16 58 12 58 Z" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
-          <path d="M19.5 47 Q 23.5 47 25.5 55 Q 23.5 58 19.5 58 Z" fill="#cc0010" stroke="#010206" strokeWidth="1"/>
+          {/* Red Vought Boots with realistic curves and gold calf borders */}
+          {/* Left Boot */}
+          <path d="M12.5 47 C 11.5 50, 12 55, 12 58 C 14 58.5, 17 58, 17.5 55 C 16.5 51, 15.5 47, 12.5 47 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
+          <path d="M12.5 48.5 Q 14.5 50 16 48.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
+          {/* Right Boot */}
+          <path d="M20 47 C 19 50, 19.5 55, 19.5 58 C 21.5 58.5, 24.5 58, 25 55 C 24 51, 23 47, 20 47 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
+          <path d="M19.8 48.5 Q 22 50 23.5 48.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
           
           {/* Torso/Chest muscular definition */}
           <rect x="11.5" y="18" width="17" height="23" fill="url(#hl-suit)" rx="4.5" stroke="#010206" strokeWidth="1.5"/>
           <rect x="13.5" y="37" width="13" height="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="0.8"/> {/* Golden grid belt */}
           
-          {/* Muscular Front arm */}
-          <g id="front-arm" transform="rotate(-75 13 20)">
-            <rect x="11.5" y="18" width="5.5" height="18" fill="url(#hl-suit)" rx="2" stroke="#010206" strokeWidth="1"/>
-            <rect x="11.5" y="30" width="5.5" height="8" fill="#cc0010" rx="1.5" stroke="#010206" strokeWidth="1"/>
+          {/* Muscular and powerful Front Arm with bicep flex and glove details */}
+          <g id="front-arm" transform="rotate(-65 14 20)">
+            {/* Flexed bicep */}
+            <path d="M11 17 C 9 20, 11 28, 14.5 28 C 17 28, 16 20, 15 17 Z" fill="url(#hl-suit)" stroke="#010206" strokeWidth="1.2" />
+            {/* Detailed red glove */}
+            <path d="M11.5 27 C 10.5 32, 11.5 38, 14 38 C 16 38, 16.5 32, 14.5 27 Z" fill="#cc0010" stroke="#010206" strokeWidth="1.2" />
+            {/* Glove gold outline */}
+            <path d="M11 28.5 C 13 29, 15 28, 15.5 26.5" stroke="url(#hl-gold)" strokeWidth="1.2" fill="none" />
           </g>
           <ellipse cx="13" cy="18" rx="4.5" ry="3" fill="url(#hl-gold)" stroke="#010206" strokeWidth="1"/>
 
           {/* Head & Skin tones */}
           <rect x="14" y="5" width="12" height="13.5" fill="url(#hl-skin)" rx="4" stroke="#010206" strokeWidth="1.2"/>
           
-          {/* Homelander's Premium Majestic Coiffed Blonde Hair */}
+          {/* Homelander's Redesigned Unified Coiffed Hair (Corrected proportional structure with no double layering) */}
           <g id="hl-hair-premium">
-            {/* Base hair silhouette block with blonde volume wave */}
-            <path d="M12 9 C 11.5 5, 13.5 1, 20 0.5 C 26 0, 28 3.5, 28 7 C 28.5 10.5, 27 12, 25 11 C 23.5 10.5, 23 7.8, 20.5 7.8 C 18 7.8, 17 10, 15 10 C 13.5 10, 12.5 10.5, 12 9 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="1.3"/>
-            
-            {/* Front swoop/quiff pompadour detail (giving volume over his forehead) */}
-            <path d="M13.5 5.5 C 13 -1, 21.5 -1.5, 23.5 1.5 C 24.5 3, 23.5 5, 21.5 5 C 18 5, 15 3.5, 13.5 5.5 Z" fill="#fff59d" stroke="#010206" strokeWidth="0.8" />
-            <path d="M15.5 3 C 17.5 1, 22 1, 22.5 4" stroke="#f57f17" strokeWidth="0.8" fill="none" />
-            <path d="M14.5 4.5 C 16.5 2, 20.5 2, 21 5" stroke="#fffde7" strokeWidth="0.8" fill="none" />
-            
-            {/* Side locks and sideburn side styling */}
-            <path d="M12.5 8 C 12 9, 13 11, 14 11.5 L 14.5 8.5 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.8" />
-            <path d="M26.5 7.5 C 27 8.5, 26 9.5, 25.5 11 L 25 8.5 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="0.8" />
-            
-            {/* Glimmer highlight locks */}
-            <path d="M17 1 Q 23 0 26 3.5" stroke="#ffffff" strokeWidth="0.7" fill="none" opacity="0.65" />
+            {/* Single elegant, unified, 3D coiffed volumetric hair mass */}
+            <path d="M13 10 C 11.5 5, 14 0.5, 20 0.5 C 26 0.5, 28.5 5, 27 10 C 26 11, 25 9.5, 23.5 8 C 22.5 7, 21.5 6.5, 20 6.5 C 18.5 6.5, 17.5 7, 16.5 8 C 15 9.5, 14 11, 13 10 Z" fill="url(#hl-hair)" stroke="#010206" strokeWidth="1.3" />
+            {/* Fully blended subtle top locks that flow into the main body organically to prevent lines mapping */}
+            <path d="M14 6 C 16 2, 24 2, 26 6 C 24 5, 16 5, 14 6 Z" fill="url(#hl-hair)" opacity="0.85" />
+            {/* Fine natural hair highlights and shadow grooves */}
+            <path d="M15.5 3.5 C 18 1.8, 22 1.8, 24.5 3.5" stroke="#ffffff" strokeWidth="0.8" strokeLinecap="round" fill="none" opacity="0.65" />
+            <path d="M17 5 C 19 3.5, 21 3.5, 23 5" stroke="#e67e22" strokeWidth="0.7" strokeLinecap="round" fill="none" opacity="0.45" />
+            <path d="M14.5 8.2 Q 16 6.2 18 7.2" stroke="#ffffff" strokeWidth="0.6" fill="none" opacity="0.4" />
           </g>
 
           {/* Ruby red Laser eye sockets */}
@@ -864,11 +881,26 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           <circle cx="25" cy="12" r="0.7" fill="#ffffff" className={`${laserActive ? 'animate-ping' : ''}`} />
         </svg>
 
-        {/* EYE GLOW RAY BEAM (Scenic Tension: targeted downwards near A-Train's feet, non-lethal) */}
+        {/* EYE GLOW RAY BEAM (LEFT EYE) */}
         <div 
-          className={`absolute top-[25px] left-[44px] w-[305px] h-[7px] bg-gradient-to-r from-[#ff0000] via-[#ffd54f] to-[#ff2222]/30 rounded-full origin-top-left rotate-[64.3deg] shadow-[0_0_15px_#ff1a1a,0_0_30px_#ff0000] z-[12] transition-opacity opacity-0 pointer-events-none duration-100 ${
-            laserActive ? '!opacity-[0.98] animate-pulse scale-y-110' : ''
+          className={`absolute top-[25px] left-[44px] w-[305px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0 ${
+            laserActive ? '!opacity-[0.98] scale-y-110' : ''
           }`} 
+          style={{
+            border: '1.2px solid #ff2200',
+            boxShadow: '0 0 8px #ff2111',
+          }}
+        />
+
+        {/* EYE GLOW RAY BEAM (RIGHT EYE) */}
+        <div 
+          className={`absolute top-[27px] left-[52px] w-[295px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0 ${
+            laserActive ? '!opacity-[0.98] scale-y-110' : ''
+          }`} 
+          style={{
+            border: '1.2px solid #ff2200',
+            boxShadow: '0 0 8px #ff2111',
+          }}
         />
       </div>
 
@@ -896,26 +928,26 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         )}
 
         {shieldActive && (
-          <div className="absolute inset-[-15px] border-2 border-indigo-400/55 rounded-full z-20 pointer-events-none animate-spin-slow flex items-center justify-center bg-indigo-500/10 shadow-[0_0_20px_rgba(100,100,250,0.3)]">
-            <div className="absolute top-0 w-3 h-3 rounded-full bg-indigo-300" />
-            <div className="absolute bottom-0 w-3 h-3 rounded-full bg-indigo-300" />
+          <div className="absolute inset-[-15px] border-2 border-indigo-400/80 rounded-full z-[10] pointer-events-none flex items-center justify-center bg-indigo-500/20 mix-blend-screen">
+            <div className="absolute top-0 w-2 h-2 rounded-full bg-indigo-200" />
+            <div className="absolute bottom-0 w-2 h-2 rounded-full bg-indigo-200" />
           </div>
         )}
 
         {/* Improved high-definition SVG artwork of A-Train */}
         <svg 
-          className="atrain-svg w-full h-full filter drop-shadow-[5px_12px_8px_rgba(0,0,0,0.45)]" 
+          className="atrain-svg w-full h-full" 
           viewBox="0 0 40 60" 
           fill="none" 
           xmlns="http://www.w3.org/2000/svg"
           style={{ overflow: 'visible' }}
         >
           <defs>
-            <linearGradient id="at-suit" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#051740"/><stop offset="50%" stop-color="#14429e"/><stop offset="100%" stop-color="#040d24"/></linearGradient>
-            <linearGradient id="at-armor" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ffffff"/><stop offset="50%" stop-color="#dce5f1"/><stop offset="100%" stop-color="#93a8c7"/></linearGradient>
-            <linearGradient id="at-skin" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#54321d"/><stop offset="50%" stop-color="#8c5837"/><stop offset="100%" stop-color="#3d2212"/></linearGradient>
-            <linearGradient id="at-glass" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffffff" /><stop offset="50%" stop-color="#00ffff" /><stop offset="100%" stop-color="#004a4a" /></linearGradient>
-            <linearGradient id="at-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffdd00"/><stop offset="100%" stop-color="#aa8c00"/></linearGradient>
+            <linearGradient id="at-suit" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#051740"/><stop offset="50%" stopColor="#14429e"/><stop offset="100%" stopColor="#040d24"/></linearGradient>
+            <linearGradient id="at-armor" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#ffffff"/><stop offset="50%" stopColor="#dce5f1"/><stop offset="100%" stopColor="#93a8c7"/></linearGradient>
+            <linearGradient id="at-skin" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#54321d"/><stop offset="50%" stopColor="#8c5837"/><stop offset="100%" stopColor="#3d2212"/></linearGradient>
+            <linearGradient id="at-glass" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#ffffff" /><stop offset="50%" stopColor="#00ffff" /><stop offset="100%" stopColor="#004a4a" /></linearGradient>
+            <linearGradient id="at-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ffdd00"/><stop offset="100%" stopColor="#aa8c00"/></linearGradient>
           </defs>
 
           {/* Athletics boots and legs with sprint animation cycle */}
@@ -969,10 +1001,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
             
             {/* Sleek silver high-tech helmet with shiny visor */}
             <rect x="16" y="5" width="10" height="12.5" fill="url(#at-skin)" rx="4" stroke="#020206" strokeWidth="1.2"/>
-            <path d="M15.5 5 C 15.5 -0.5, 26.5 -0.5, 26.5 5 C 25.5 4, 16.5 3.5, 15.5 5 Z" fill="url(#at-suit)" stroke="#020206" strokeWidth="1.2"/>
-            {/* Glowing neon visors */}
-            <rect x="16" y="7" width="10" height="4.5" fill="url(#at-glass)" rx="2.2" stroke="#020206" strokeWidth="1" />
-            <ellipse cx="21" cy="9.2" rx="1.5" ry="1.5" fill="#ffffff" className="animate-ping" />
+            
+            {/* Buzz Cut Hair (Short, cropped to the head like in the series) */}
+            <path d="M15.5 5 C 15.5 3, 26.5 3, 26.5 5 Z" fill="#111111" stroke="#020206" strokeWidth="1.2"/>
+            
+            {/* White and blue stylish sportswear sunglasses (A-train series style) */}
+            <rect x="16" y="7" width="10" height="4" fill="#f0f0f0" rx="2" stroke="#020206" strokeWidth="1" />
+            <path d="M16.5 7.5 L 25.5 7.5 L 24 10 L 18 10 Z" fill="#0066ff" opacity="0.85" />
           </g>
         </svg>
       </div>
@@ -983,7 +1018,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           return (
             <div 
               key={obs.id}
-              className="absolute will-change-transform z-[15] filter drop-shadow-[4px_10px_8px_rgba(0,0,0,0.55)]"
+              className="absolute will-change-transform z-[15]"
               style={{
                 width: `${obs.width}px`,
                 height: `${obs.height}px`,
@@ -995,13 +1030,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 <svg width="100%" height="100%" viewBox="0 0 65 35" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <linearGradient id="log-body" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#5c3818"/>
-                      <stop offset="50%" stop-color="#40250d"/>
-                      <stop offset="100%" stop-color="#2a1605"/>
+                      <stop offset="0%" stopColor="#5c3818"/>
+                      <stop offset="50%" stopColor="#40250d"/>
+                      <stop offset="100%" stopColor="#2a1605"/>
                     </linearGradient>
                     <linearGradient id="moss-grad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#22c55e"/>
-                      <stop offset="100%" stop-color="#15803d"/>
+                      <stop offset="0%" stopColor="#22c55e"/>
+                      <stop offset="100%" stopColor="#15803d"/>
                     </linearGradient>
                   </defs>
                   {/* Fallen mossy tree log trunk */}
@@ -1029,13 +1064,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 <svg width="100%" height="100%" viewBox="0 0 55 45" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <linearGradient id="boulder-grad" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stop-color="#78716c"/>
-                      <stop offset="50%" stop-color="#44403c"/>
-                      <stop offset="100%" stop-color="#1c1917"/>
+                      <stop offset="0%" stopColor="#78716c"/>
+                      <stop offset="50%" stopColor="#44403c"/>
+                      <stop offset="100%" stopColor="#1c1917"/>
                     </linearGradient>
                     <linearGradient id="rock-moss" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#4ade80"/>
-                      <stop offset="100%" stop-color="#166534"/>
+                      <stop offset="0%" stopColor="#4ade80"/>
+                      <stop offset="100%" stopColor="#166534"/>
                     </linearGradient>
                   </defs>
                   {/* Spooky granite boulder shape */}
@@ -1056,13 +1091,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 <svg width="100%" height="100%" viewBox="0 0 85 36" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <radialGradient id="forest-pit" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stop-color="#020306"/>
-                      <stop offset="78%" stop-color="#0d110f"/>
-                      <stop offset="100%" stop-color="#1b2e1e"/>
+                      <stop offset="0%" stopColor="#020306"/>
+                      <stop offset="78%" stopColor="#0d110f"/>
+                      <stop offset="100%" stopColor="#1b2e1e"/>
                     </radialGradient>
                     <linearGradient id="grass-pit" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#22c55e"/>
-                      <stop offset="100%" stop-color="#14532d"/>
+                      <stop offset="0%" stopColor="#22c55e"/>
+                      <stop offset="100%" stopColor="#14532d"/>
                     </linearGradient>
                   </defs>
                   {/* Grassy soil frame outline */}
@@ -1083,12 +1118,12 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 <svg width="100%" height="100%" viewBox="0 0 90 40" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <linearGradient id="branch-body" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stop-color="#5c3818"/>
-                      <stop offset="100%" stop-color="#2a1605"/>
+                      <stop offset="0%" stopColor="#5c3818"/>
+                      <stop offset="100%" stopColor="#2a1605"/>
                     </linearGradient>
                     <radialGradient id="leaves-green" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stop-color="#4ade80"/>
-                      <stop offset="100%" stop-color="#14532d"/>
+                      <stop offset="0%" stopColor="#4ade80"/>
+                      <stop offset="100%" stopColor="#14532d"/>
                     </radialGradient>
                   </defs>
                   {/* Thick heavy oak wood branch spanning across */}
@@ -1117,7 +1152,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           return (
             <div
               key={item.id}
-              className="absolute z-[15] filter drop-shadow-[0_0_10px_rgba(0,255,255,0.85)] pointer-events-none"
+              className="absolute z-[15] pointer-events-none"
               style={{
                 width: `${item.width}px`,
                 height: `${item.height}px`,
@@ -1128,8 +1163,8 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
             >
               <svg width="100%" height="100%" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <linearGradient id="v-liquid" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#00ffff"/><stop offset="100%" stop-color="#0044ff"/></linearGradient>
-                  <linearGradient id="v-glass" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(255,255,255,0.85)"/><stop offset="40%" stop-color="rgba(255,255,255,0.25)"/><stop offset="100%" stop-color="rgba(250,255,255,0.55)"/></linearGradient>
+                  <linearGradient id="v-liquid" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#00ffff"/><stop offset="100%" stopColor="#0044ff"/></linearGradient>
+                  <linearGradient id="v-glass" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="rgba(255,255,255,0.85)"/><stop offset="40%" stopColor="rgba(255,255,255,0.25)"/><stop offset="100%" stopColor="rgba(250,255,255,0.55)"/></linearGradient>
                 </defs>
                 {/* Silver steel cap */}
                 <rect x="8" y="2" width="14" height="6.5" fill="#d1d8e2" rx="1.5" />
@@ -1166,7 +1201,8 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 bottom: `${p.y}px`,
                 backgroundColor: p.color,
                 opacity: p.opacity,
-                boxShadow: `0 0 6px ${p.color}`,
+                // Only apply expensive CSS blur shadow filter to larger Compound V bubbles
+                boxShadow: p.size > 6 ? `0 0 5px ${p.color}` : 'none',
                 mixBlendMode: 'screen'
               }}
             />
@@ -1177,13 +1213,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       {/* Style Animations helpers */}
       <style>{`
         @keyframes homelanderFly {
-          0% { transform: translateY(0px) rotate(4deg); }
-          50% { transform: translateY(-16px) rotate(2deg); }
-          100% { transform: translateY(0px) rotate(4deg); }
+          0% { transform: translateY(0px) rotate(3deg); }
+          50% { transform: translateY(-13px) rotate(-1.5deg); }
+          100% { transform: translateY(0px) rotate(3deg); }
         }
         @keyframes capeWave {
-          0% { transform: scaleX(1) skewY(0deg); }
-          100% { transform: scaleX(1.18) skewY(5deg); }
+          0% { transform: scaleX(0.96) skewY(-1deg) rotate(-1deg); }
+          100% { transform: scaleX(1.15) skewY(5deg) rotate(3deg); }
         }
         @keyframes legRunFront {
           0% { transform: rotate(-55deg) translateY(0px); }
@@ -1204,8 +1240,8 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           100% { transform: rotate(55deg); }
         }
         @keyframes torsoBob {
-          0% { transform: translateY(0px) rotate(8deg); }
-          100% { transform: translateY(5px) rotate(11deg); }
+          0% { transform: translateY(0px) rotate(7deg); }
+          100% { transform: translateY(4px) rotate(10deg); }
         }
         @keyframes floatItem {
           0% { transform: translateY(0px); }
@@ -1215,26 +1251,34 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           0% { transform: scaleX(0.9) scaleY(1); opacity: 0.75; }
           100% { transform: scaleX(1.15) scaleY(0.85); opacity: 0.45; }
         }
+        
+        /* Removed heavy layout transition matrix interpolations on character limbs to fix extreme lag when crouching/jumping */
+
         /* Running cycles only active when player has the .running class */
         .running .at-leg-front {
           transform-origin: 21px 38px;
           animation: legRunFront 0.18s infinite linear;
+          transition: none !important;
         }
         .running .at-leg-back {
           transform-origin: 15px 38px;
           animation: legRunBack 0.18s infinite linear;
+          transition: none !important;
         }
         .running .at-torso-group {
           transform-origin: 17px 35px;
           animation: torsoBob 0.09s infinite ease-in-out alternate;
+          transition: none !important;
         }
         .running .at-arm {
           transform-origin: 23px 21px;
           animation: armRun 0.18s infinite ease-in-out alternate;
+          transition: none !important;
         }
         .running .at-arm-back {
           transform-origin: 15px 21px;
           animation: armRunBack 0.18s infinite ease-in-out alternate;
+          transition: none !important;
         }
 
         .jumping .at-torso-group {
@@ -1260,16 +1304,74 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         }
         .crouching .at-leg-front {
           transform: rotate(-55deg) translate(3px, -4px) !important;
+          transition: none !important;
         }
         .crouching .at-leg-back {
           transform: rotate(55deg) translate(-2px, -4px) !important;
+          transition: none !important;
         }
         .crouching .at-arm {
           transform: rotate(-75deg) translate(1px, -1px) !important;
+          transition: none !important;
         }
         .crouching .at-arm-back {
           transform: rotate(75deg) translate(-1px, -1px) !important;
+          transition: none !important;
         }
+        
+        /* Realistic Dying States - Crash Tumble, slide and stop flat on floor */
+        .dying .atrain-svg {
+          transform-origin: 20px 50px;
+          animation: atrainRealisticDeath 1.1s cubic-bezier(0.1, 0.8, 0.3, 1) forwards !important;
+          transition: none !important;
+        }
+        .dying .at-torso-group {
+          transform: rotate(85deg) translate(6px, 14px) !important;
+          transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        }
+        .dying .at-leg-front {
+          transform: rotate(-80deg) translate(4px, -10px) !important;
+          transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        }
+        .dying .at-leg-back {
+          transform: rotate(85deg) translate(-6px, -4px) !important;
+          transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        }
+        .dying .at-arm {
+          transform: rotate(-135deg) translate(2px, 2px) !important;
+          transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        }
+        .dying .at-arm-back {
+          transform: rotate(115deg) translate(-2px, 2px) !important;
+          transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        }
+
+        @keyframes atrainRealisticDeath {
+          0% {
+            transform: translateY(0px) rotate(0deg) translateX(0px);
+          }
+          15% {
+            /* Leap backward/upward from crash impact, starting first forward roll tumbling */
+            transform: translateY(-28px) rotate(55deg) translateX(-12px);
+          }
+          35% {
+            /* Midair full roll tumbling */
+            transform: translateY(-14px) rotate(140deg) translateX(-25px);
+          }
+          55% {
+            /* Crash down on ground on shoulders */
+            transform: translateY(2px) rotate(220deg) translateX(-42px);
+          }
+          75% {
+            /* Sliding friction flat roll */
+            transform: translateY(4px) rotate(270deg) translateX(-62px);
+          }
+          100% {
+            /* Completely flat skidded and slumped to rest on the dirt tracks */
+            transform: translateY(4px) rotate(270deg) translateX(-78px);
+          }
+        }
+
         .animate-spin-slow {
           animation: spin 5s linear infinite;
         }
