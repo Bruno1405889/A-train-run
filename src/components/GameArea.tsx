@@ -74,13 +74,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   
-  // Game reactive state
-  const [multiplier, setMultiplier] = useState(1);
-  const [multiplierActive, setMultiplierActive] = useState(false);
-  const [laserWarning, setLaserWarning] = useState(false);
-  const [laserActive, setLaserActive] = useState(false);
-  const [shieldActive, setShieldActive] = useState(false); 
-
+  // Game reactive state via refs (to prevent React re-render lag)
+  const multiplierRef = useRef(1);
+  const multiplierActiveRef = useRef(false);
+  const laserActiveRef = useRef(false);
+  
   // Runway zones/phases state
   const [currentZone, setCurrentZone] = useState<ZoneType>(ZONES[0]);
   const [activeZoneBanner, setActiveZoneBanner] = useState<ZoneType | null>(null);
@@ -137,6 +135,58 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const [activeObstacleList, setActiveObstacleList] = useState<ObstacleInstance[]>([]);
   const [activeItemList, setActiveItemList] = useState<ItemInstance[]>([]);
 
+  const updateLaserUI = (active: boolean) => {
+    laserActiveRef.current = active;
+    const ids = ['laser-eye-1', 'laser-eye-2'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        if (active) el.classList.add('animate-ping');
+        else el.classList.remove('animate-ping');
+      }
+    });
+    
+    ['laser-beam-1', 'laser-beam-2'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        if (active) {
+          el.classList.add('!opacity-[0.98]', 'scale-y-110');
+        } else {
+          el.classList.remove('!opacity-[0.98]', 'scale-y-110');
+        }
+      }
+    });
+  };
+
+  const updateShieldUI = (active: boolean) => {
+    shieldActiveRef.current = active;
+    const ui = document.getElementById('ui-shield-active');
+    if (ui) ui.style.display = active ? 'flex' : 'none';
+    
+    const ring = document.getElementById('shield-ring-active');
+    if (ring) ring.style.display = active ? 'flex' : 'none';
+  };
+
+  const updateMultiplierUI = (active: boolean, value: number) => {
+    multiplierActiveRef.current = active;
+    multiplierRef.current = value;
+    
+    const ui = document.getElementById('ui-multiplier-active');
+    if (ui) ui.style.display = active ? 'flex' : 'none';
+    
+    const text = document.getElementById('ui-multiplier-text');
+    if (text) text.style.display = active ? 'block' : 'none';
+    
+    const trail = document.getElementById('speed-trail');
+    if (trail) {
+      if (active) {
+        trail.style.background = 'linear-gradient(-90deg, rgba(245, 158, 11, 0.75), rgba(217, 119, 6, 0.2), transparent)';
+      } else {
+        trail.style.background = ''; // reset to default
+      }
+    }
+  };
+
   // Keybindings listeners
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -165,14 +215,12 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           const v1el = document.getElementById('v1-count');
           if (v1el) v1el.innerText = v1ChargesRef.current.toString();
           
-          shieldActiveRef.current = true;
-          setShieldActive(true);
+          updateShieldUI(true);
           playLaserChargeSound();
           
           if (shieldTimeoutRef.current) clearTimeout(shieldTimeoutRef.current);
           shieldTimeoutRef.current = setTimeout(() => {
-            shieldActiveRef.current = false;
-            setShieldActive(false);
+            updateShieldUI(false);
           }, 3000);
           
           createCompoundVFlash();
@@ -213,11 +261,9 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       midRef.current = 0;
       groundScrollRef.current = 0;
 
-      setMultiplier(1);
-      setMultiplierActive(false);
-      setLaserWarning(false);
-      setLaserActive(false);
-      setShieldActive(false);
+      updateMultiplierUI(false, 1);
+      updateLaserUI(false);
+      updateShieldUI(false);
 
       if (playerRef.current) {
         playerRef.current.style.opacity = '1';
@@ -405,7 +451,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
     // Tick score meter
     if (globalCyclesRef.current % 5 === 0) {
-      scoreRef.current += multiplier;
+      scoreRef.current += multiplierRef.current;
     }
 
     loopRef.current = requestAnimationFrame(gameStep);
@@ -425,7 +471,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (cycle.timer <= 0) {
         cycle.state = 'shooting';
         cycle.timer = 110; 
-        setLaserActive(true);
+        updateLaserUI(true);
         playLaserShootSound();
       }
     } else if (cycle.state === 'shooting') {
@@ -440,7 +486,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (cycle.timer <= 0) {
         cycle.state = 'idle';
         cycle.timer = Math.floor(Math.random() * 220) + 160; 
-        setLaserActive(false);
+        updateLaserUI(false);
       }
     }
   };
@@ -566,15 +612,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         const v1el = document.getElementById('v1-count');
         if (v1el) v1el.innerText = v1ChargesRef.current.toString();
 
-        setMultiplier(3);
-        setMultiplierActive(true);
+        updateMultiplierUI(true, 3);
         scoreRef.current += 50; 
         createCompoundVFlash();
 
         // High multiplier expires after 6 seconds
         setTimeout(() => {
-          setMultiplier(1);
-          setMultiplierActive(false);
+          updateMultiplierUI(false, 1);
         }, 6000);
 
         itemsRef.current.splice(i, 1);
@@ -794,19 +838,21 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
             <span id="v1-count" className="text-fuchsia-400 text-sm font-extrabold">0</span>
           </div>
 
-          {multiplierActive && (
-            <div className="bg-amber-950/90 border-2 border-amber-500 rounded-lg px-3 py-1.5 flex items-center gap-2 select-none shadow-lg">
-              <FlaskConical size={14} className="text-amber-400" />
-              <span className="text-amber-300 text-[10px] tracking-widest font-bold">X3 (COMPOSTO V)</span>
-            </div>
-          )}
+          <div 
+            id="ui-multiplier-active" 
+            className="bg-amber-950/90 border-2 border-amber-500 rounded-lg px-3 py-1.5 hidden items-center gap-2 select-none shadow-lg"
+          >
+            <FlaskConical size={14} className="text-amber-400" />
+            <span className="text-amber-300 text-[10px] tracking-widest font-bold">X3 (COMPOSTO V)</span>
+          </div>
 
-          {shieldActive && (
-            <div className="bg-indigo-900/80 border-2 border-indigo-400 rounded-lg px-3 py-1.5 flex items-center gap-2 select-none shadow-lg">
-              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
-              <span className="text-indigo-200 text-[10px] tracking-wider font-bold">ESCUDO ATIVO</span>
-            </div>
-          )}
+          <div 
+            id="ui-shield-active" 
+            className="bg-indigo-900/80 border-2 border-indigo-400 rounded-lg px-3 py-1.5 hidden items-center gap-2 select-none shadow-lg"
+          >
+            <div className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+            <span className="text-indigo-200 text-[10px] tracking-wider font-bold">ESCUDO ATIVO</span>
+          </div>
         </div>
 
         {/* Simple running circuit overlay */}
@@ -907,16 +953,15 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
           {/* Ruby red Laser eye sockets */}
           <circle cx="21" cy="11.5" r="1.5" fill="#ff0000" />
-          <circle cx="21" cy="11.5" r="0.7" fill="#ffffff" className={`${laserActive ? 'animate-ping' : ''}`} />
+          <circle id="laser-eye-1" cx="21" cy="11.5" r="0.7" fill="#ffffff" />
           <circle cx="25" cy="12" r="1.5" fill="#ff0000" />
-          <circle cx="25" cy="12" r="0.7" fill="#ffffff" className={`${laserActive ? 'animate-ping' : ''}`} />
+          <circle id="laser-eye-2" cx="25" cy="12" r="0.7" fill="#ffffff" />
         </svg>
 
         {/* EYE GLOW RAY BEAM (LEFT EYE) */}
         <div 
-          className={`absolute top-[25px] left-[44px] w-[305px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0 ${
-            laserActive ? '!opacity-[0.98] scale-y-110' : ''
-          }`} 
+          id="laser-beam-1"
+          className="absolute top-[25px] left-[44px] w-[305px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0" 
           style={{
             border: '1.2px solid #ff2200',
             boxShadow: '0 0 8px #ff2111',
@@ -925,9 +970,8 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
         {/* EYE GLOW RAY BEAM (RIGHT EYE) */}
         <div 
-          className={`absolute top-[27px] left-[52px] w-[295px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0 ${
-            laserActive ? '!opacity-[0.98] scale-y-110' : ''
-          }`} 
+          id="laser-beam-2"
+          className="absolute top-[27px] left-[52px] w-[295px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0" 
           style={{
             border: '1.2px solid #ff2200',
             boxShadow: '0 0 8px #ff2111',
@@ -943,27 +987,22 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       >
         {/* Dynamic Speed trails */}
         <div 
+          id="speed-trail"
           className="absolute right-[50%] top-[10%] w-[160px] h-[75%] rounded-l-full filter blur-[3px] pointer-events-none mix-blend-screen transition-all select-none opacity-0"
           style={{
-            background: multiplierActive 
-              ? 'linear-gradient(-90deg, rgba(245, 158, 11, 0.75), rgba(217, 119, 6, 0.2), transparent)' 
-              : `linear-gradient(-90deg, ${currentZone.particleColor}, ${currentZone.groundBorder}1a, transparent)`,
+            background: `linear-gradient(-90deg, ${currentZone.particleColor}, ${currentZone.groundBorder}1a, transparent)`,
             animation: 'trailPulse 0.12s infinite alternate ease-in-out'
           }}
         />
 
-        {multiplierActive && (
-          <div className="absolute -top-6 left-1/2 -translate-x-1/2 select-none pointer-events-none">
-            <span className="text-[10px] font-mono text-amber-400 font-extrabold text-glow-yellow animate-bounce uppercase">Composto V!</span>
-          </div>
-        )}
+        <div id="ui-multiplier-text" className="absolute -top-6 left-1/2 -translate-x-1/2 select-none pointer-events-none hidden">
+          <span className="text-[10px] font-mono text-amber-400 font-extrabold text-glow-yellow animate-bounce uppercase">Composto V!</span>
+        </div>
 
-        {shieldActive && (
-          <div className="absolute inset-[-15px] border-2 border-indigo-400/80 rounded-full z-[10] pointer-events-none flex items-center justify-center bg-indigo-500/20 mix-blend-screen">
-            <div className="absolute top-0 w-2 h-2 rounded-full bg-indigo-200" />
-            <div className="absolute bottom-0 w-2 h-2 rounded-full bg-indigo-200" />
-          </div>
-        )}
+        <div id="shield-ring-active" className="absolute inset-[-15px] border-2 border-indigo-400/80 rounded-full z-[10] pointer-events-none flex items-center justify-center bg-indigo-500/20 mix-blend-screen hidden">
+          <div className="absolute top-0 w-2 h-2 rounded-full bg-indigo-200" />
+          <div className="absolute bottom-0 w-2 h-2 rounded-full bg-indigo-200" />
+        </div>
 
         {/* Improved high-definition SVG artwork of A-Train */}
         <svg 
@@ -1033,9 +1072,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
             {/* Sleek silver high-tech helmet with shiny visor */}
             <rect x="16" y="5" width="10" height="12.5" fill="url(#at-skin)" rx="4" stroke="#020206" strokeWidth="1.2"/>
             
-            {/* Buzz Cut Hair (Short, clean fade edge-up, closely cropped like the series) */}
-            <path d="M15.5 6 C 15.5 2.5, 26.5 2.5, 26.5 6 C 25.5 6, 24.5 5.2, 21 5.2 C 17.5 5.2, 16.5 6, 15.5 6 Z" fill="#111111" stroke="#020206" strokeWidth="1.2"/>
-            <path d="M15.5 6 V 8 M 26.5 6 V 8" stroke="#111111" strokeWidth="1" />
+            {/* Professional Fade Haircut (A-Train style: very short, sharp edge-up) */}
+            <path d="M15.5 6 C 15.5 2, 26.5 2, 26.5 6 C 25.5 5.5, 24.5 4.8, 21 4.8 C 17.5 4.8, 16.5 5.5, 15.5 6 Z" fill="#0c0d12" stroke="#020206" strokeWidth="1.2"/>
+            {/* Fine texture lines for realistic short hair / waves */}
+            <path d="M16.5 3.5 Q 21 2.5 25.5 3.5 M 17 4.5 Q 21 3.8 25 4.5" stroke="#1c1f2e" strokeWidth="0.8" fill="none" opacity="0.6" />
+            <path d="M15.5 6 L 15.5 7.5 M 26.5 6 L 26.5 7.5" stroke="#0c0d12" strokeWidth="1" strokeLinecap="round" />
             
             {/* White and blue stylish sportswear sunglasses (A-train series style) */}
             <rect x="16" y="7" width="10" height="4" fill="#f0f0f0" rx="2" stroke="#020206" strokeWidth="1" />
@@ -1192,10 +1233,13 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 height: `${item.height}px`,
                 bottom: `${item.bottom}px`,
                 transform: `translateX(${item.x}px)`,
-                animation: 'floatItem 1s infinite ease-in-out alternate'
               }}
             >
-              <svg width="100%" height="100%" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
+              <div 
+                className="w-full h-full"
+                style={{ animation: 'floatItem 1s infinite ease-in-out alternate' }}
+              >
+                <svg width="100%" height="100%" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
                 <defs>
                   <linearGradient id="v-liquid" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#00ffff"/><stop offset="100%" stopColor="#0044ff"/></linearGradient>
                   <linearGradient id="v-glass" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="rgba(255,255,255,0.85)"/><stop offset="40%" stopColor="rgba(255,255,255,0.25)"/><stop offset="100%" stopColor="rgba(250,255,255,0.55)"/></linearGradient>
@@ -1216,6 +1260,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                 <circle cx="11" cy="28" r="1.5" fill="#ffffff" opacity="0.8" className="animate-pulse" />
                 <circle cx="18" cy="18" r="1" fill="#ffffff" opacity="0.95" className="animate-pulse" />
               </svg>
+              </div>
             </div>
           );
         })}

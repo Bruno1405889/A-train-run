@@ -14,7 +14,8 @@ import {
   Zap, 
   Sparkles, 
   BookOpen, 
-  RefreshCw 
+  RefreshCw,
+  Info 
 } from 'lucide-react';
 
 interface GameUser {
@@ -38,6 +39,7 @@ export default function App() {
   // Form Inputs
   const [guestName, setGuestName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showAbout, setShowAbout] = useState(false);
 
   // Difficulty configurations (speed multipliers)
   const [speedMultiplier, setSpeedMultiplier] = useState(1.0);
@@ -236,7 +238,7 @@ export default function App() {
                 </p>
                 <div className="space-y-2.5 text-[10.5px] font-sans text-slate-400">
                   <div className="flex items-center justify-between">
-                    <span>Pular & Duplo Salto</span>
+                    <span>Pular</span>
                     <span className="font-mono text-[9.5px] bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-cyan-400 select-all font-bold">ESPAÇO / SETA CIMA</span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -321,6 +323,13 @@ export default function App() {
                   <Play size={15} strokeWidth={3} className="text-white fill-white" />
                   Iniciar Corrida
                 </button>
+                <button
+                  onClick={() => setShowAbout(true)}
+                  className="w-full flex items-center justify-center gap-2.5 px-6 py-3 bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-slate-600 text-slate-200 font-mono text-[10px] tracking-widest font-bold rounded-xl transition duration-150 active:scale-95 uppercase"
+                >
+                  <Info size={14} className="text-slate-400" />
+                  Sobre
+                </button>
               </div>
 
               {/* Difficulty speeds settings */}
@@ -349,6 +358,33 @@ export default function App() {
               </div>
             </motion.div>
           )}
+
+          {/* SCREEN: ABOUT MODAL */}
+          <AnimatePresence>
+            {showAbout && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm shadow-2xl"
+              >
+                <div className="w-full max-w-[400px] bg-slate-900 border-2 border-cyan-500 rounded-3xl p-8 relative flex flex-col text-left text-slate-200">
+                  <h2 className="font-mono text-xl text-glow-blue italic font-black text-white uppercase mb-4 flex items-center gap-2">
+                    <Info size={20} className="text-cyan-400" /> Sobre o Jogo
+                  </h2>
+                  <p className="font-sans text-sm leading-relaxed mb-6">
+                    Um jogo inspirado no T-rex game do Chrome, mas com temática de The boys, o jogo segue o mesmo estilo do famoso "jogo do dinossauro do Chrome", mas com algumas mecânicas diferentes, mapa, personagens, menu e temática.
+                  </p>
+                  <button
+                    onClick={() => setShowAbout(false)}
+                    className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-[11px] tracking-widest rounded-xl transition duration-150 active:scale-95 uppercase font-bold"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* SCREEN: ACTIVE GAME ENGINE AREA */}
           {screen === 'playing' && (
