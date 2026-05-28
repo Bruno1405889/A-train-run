@@ -162,7 +162,7 @@ export default function Leaderboard({ onBack, currentUserId }: LeaderboardProps)
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.03 }}
-                    key={score.id || index} 
+                    key={`leaderboard-score-${score.id || 'idx'}-${index}`} 
                     className={`border-b border-slate-900 text-xs transition-colors hover:bg-slate-900/50 ${
                       isCurrentUser ? 'bg-cyan-950/40 border-l-4 border-l-cyan-500' : ''
                     }`}

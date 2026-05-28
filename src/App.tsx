@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { submitScore, fetchUserPersonalBest, isFirebaseDummy } from './firebaseService';
 import { generateRandomNickname } from './components/VoughtNicknames';
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,7 +15,8 @@ import {
   Sparkles, 
   BookOpen, 
   RefreshCw,
-  Info 
+  Info,
+  Users
 } from 'lucide-react';
 
 interface GameUser {
@@ -24,6 +25,23 @@ interface GameUser {
   photoURL?: string;
   isGuest: boolean;
 }
+
+interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  conditionDescription: string;
+  iconType: 'distance' | 'collect' | 'v1';
+}
+
+const ACHIEVEMENTS_DEF: Achievement[] = [
+  { id: 'dist_100', title: 'Velocidade Inicial', description: 'Correu 100 metros com sucesso!', conditionDescription: 'Corra 100m', iconType: 'distance' },
+  { id: 'dist_500', title: 'Super Velocista', description: 'Rompeu as barreiras dos 500 metros!', conditionDescription: 'Corra 500m', iconType: 'distance' },
+  { id: 'dist_1000', title: 'O Trem-Bala', description: 'Correu 1000 metros e ultrapassou os limites!', conditionDescription: 'Corra 1000m', iconType: 'distance' },
+  { id: 'collect_1', title: 'Fórmula Secreta', description: 'Coletou seu primeiro frasco de Composto V!', conditionDescription: 'Colete 1 Composto V', iconType: 'collect' },
+  { id: 'collect_5', title: 'Dose Química', description: 'Coletou 5 frascos de Composto V nesta corrida!', conditionDescription: 'Colete 5 Compostos V', iconType: 'collect' },
+  { id: 'activate_v1', title: 'Poder Atômico', description: 'Ativou o soro de invisibilidade e supervelocidade V1!', conditionDescription: 'Ative o V1 manualmente (Tecla E)', iconType: 'v1' },
+];
 
 export default function App() {
   const [user, setUser] = useState<GameUser | null>(null);
@@ -40,6 +58,19 @@ export default function App() {
   const [guestName, setGuestName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAbout, setShowAbout] = useState(false);
+  const [showTeam, setShowTeam] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+
+  // Achievements states
+  const [unlockedIds, setUnlockedIds] = useState<string[]>([]);
+  const unlockedIdsRef = useRef<string[]>([]);
+  const [notifications, setNotifications] = useState<{ id: string; title: string; description: string }[]>([]);
+  const [runVCollected, setRunVCollected] = useState(0);
+
+  // Sync ref with current unlockedIds state
+  useEffect(() => {
+    unlockedIdsRef.current = unlockedIds;
+  }, [unlockedIds]);
 
   // Difficulty configurations (speed multipliers)
   const [speedMultiplier, setSpeedMultiplier] = useState(1.0);
@@ -68,6 +99,83 @@ export default function App() {
     setAuthLoading(false);
     setGuestName(generateRandomNickname());
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      const unlocked: string[] = [];
+      ACHIEVEMENTS_DEF.forEach(ach => {
+        const key = `atrain_ach_${user.displayName}_${ach.id}`;
+        if (localStorage.getItem(key) === 'true') {
+          unlocked.push(ach.id);
+        }
+      });
+      setUnlockedIds(unlocked);
+    } else {
+      setUnlockedIds([]);
+    }
+  }, [user]);
+
+  const handleStartGame = () => {
+    setRunVCollected(0);
+    setScreen('playing');
+  };
+
+  const handleGameEvent = (type: string, value?: any) => {
+    if (!user) return;
+
+    const unlock = (id: string) => {
+      // Avoid state set if already listed as unlocked
+      if (unlockedIdsRef.current.includes(id)) return;
+
+      const key = `atrain_ach_${user.displayName}_${id}`;
+      if (localStorage.getItem(key) === 'true') {
+        if (!unlockedIdsRef.current.includes(id)) {
+          setUnlockedIds(prev => {
+            if (prev.includes(id)) return prev;
+            return [...prev, id];
+          });
+        }
+        return;
+      }
+
+      localStorage.setItem(key, 'true');
+      setUnlockedIds(prev => {
+        if (prev.includes(id)) return prev;
+        return [...prev, id];
+      });
+
+      const ach = ACHIEVEMENTS_DEF.find(a => a.id === id);
+      if (ach) {
+        const uniqueId = `${id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newNotif = {
+          id: uniqueId,
+          title: ach.title,
+          description: ach.description
+        };
+        setNotifications(prev => [...prev, newNotif]);
+
+        setTimeout(() => {
+          setNotifications(prev => prev.filter(n => n.id !== uniqueId));
+        }, 4500);
+      }
+    };
+
+    if (type === 'score') {
+      const currentScore = value as number;
+      if (currentScore >= 100) unlock('dist_100');
+      if (currentScore >= 500) unlock('dist_500');
+      if (currentScore >= 1000) unlock('dist_1000');
+    } else if (type === 'collect-v') {
+      setRunVCollected(prev => {
+        const next = prev + 1;
+        if (next >= 1) unlock('collect_1');
+        if (next >= 5) unlock('collect_5');
+        return next;
+      });
+    } else if (type === 'activate-v1') {
+      unlock('activate_v1');
+    }
+  };
 
   const handleGuestLogin = () => {
     const sanitized = guestName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '');
@@ -165,7 +273,8 @@ export default function App() {
           <span className="font-mono text-xs tracking-wider text-cyan-400 animate-pulse uppercase">Carregando Sistema...</span>
         </div>
       ) : (
-        <AnimatePresence mode="wait">
+        <>
+          <AnimatePresence mode="wait">
           
           {/* SCREEN: ARCHIVE LOGIN */}
           {screen === 'login' && (
@@ -317,7 +426,7 @@ export default function App() {
               {/* Primary action runs */}
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={() => setScreen('playing')}
+                  onClick={handleStartGame}
                   className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-gradient-to-r from-cyan-500 via-indigo-600 to-fuchsia-600 hover:from-cyan-400 hover:via-indigo-500 hover:to-fuchsia-500 border-2 border-cyan-400 text-white font-mono text-xs tracking-widest font-black rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition duration-155 hover:scale-[1.02] active:scale-[0.98] cursor-pointer uppercase"
                 >
                   <Play size={15} strokeWidth={3} className="text-white fill-white" />
@@ -329,6 +438,20 @@ export default function App() {
                 >
                   <Info size={14} className="text-slate-400" />
                   Sobre
+                </button>
+                <button
+                  onClick={() => setShowTeam(true)}
+                  className="w-full flex items-center justify-center gap-2.5 px-6 py-3 bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-slate-600 text-slate-200 font-mono text-[10px] tracking-widest font-bold rounded-xl transition duration-150 active:scale-95 uppercase"
+                >
+                  <Users size={14} className="text-slate-400" />
+                  Equipe do projeto
+                </button>
+                <button
+                  onClick={() => setShowAchievements(true)}
+                  className="w-full flex items-center justify-center gap-2.5 px-6 py-3 bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-slate-600 text-slate-200 font-mono text-[10px] tracking-widest font-bold rounded-xl transition duration-150 active:scale-95 uppercase"
+                >
+                  <Trophy size={14} className="text-yellow-400" />
+                  Conquistas
                 </button>
               </div>
 
@@ -359,33 +482,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* SCREEN: ABOUT MODAL */}
-          <AnimatePresence>
-            {showAbout && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm shadow-2xl"
-              >
-                <div className="w-full max-w-[400px] bg-slate-900 border-2 border-cyan-500 rounded-3xl p-8 relative flex flex-col text-left text-slate-200">
-                  <h2 className="font-mono text-xl text-glow-blue italic font-black text-white uppercase mb-4 flex items-center gap-2">
-                    <Info size={20} className="text-cyan-400" /> Sobre o Jogo
-                  </h2>
-                  <p className="font-sans text-sm leading-relaxed mb-6">
-                    Um jogo inspirado no T-rex game do Chrome, mas com temática de The boys, o jogo segue o mesmo estilo do famoso "jogo do dinossauro do Chrome", mas com algumas mecânicas diferentes, mapa, personagens, menu e temática.
-                  </p>
-                  <button
-                    onClick={() => setShowAbout(false)}
-                    className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-[11px] tracking-widest rounded-xl transition duration-150 active:scale-95 uppercase font-bold"
-                  >
-                    Fechar
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
           {/* SCREEN: ACTIVE GAME ENGINE AREA */}
           {screen === 'playing' && (
             <motion.div 
@@ -398,7 +494,9 @@ export default function App() {
               <GameArea 
                 isPlaying={screen === 'playing'}
                 onGameOver={handleGameOver}
+                onQuit={() => setScreen('menu')}
                 speedMultiplier={speedMultiplier}
+                onGameEvent={handleGameEvent}
               />
             </motion.div>
           )}
@@ -446,7 +544,7 @@ export default function App() {
               {/* Post game buttons layout */}
               <div className="flex flex-col gap-2.5">
                 <button
-                  onClick={() => setScreen('playing')}
+                  onClick={handleStartGame}
                   className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 border-2 border-red-400 text-white font-mono text-xs tracking-widest font-black rounded-xl shadow-lg transition duration-150 active:scale-95 cursor-pointer uppercase"
                 >
                   Correr Novamente
@@ -462,7 +560,175 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-      )}
-    </div>
-  );
+
+        {/* SCREEN: ABOUT MODAL */}
+        <AnimatePresence>
+          {showAbout && (
+            <motion.div
+              key="modal-about"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm shadow-2xl"
+            >
+              <div className="w-full max-w-[400px] bg-slate-900 border-2 border-cyan-500 rounded-3xl p-8 relative flex flex-col text-left text-slate-200">
+                <h2 className="font-mono text-xl text-glow-blue italic font-black text-white uppercase mb-4 flex items-center gap-2">
+                  <Info size={20} className="text-cyan-400" /> Sobre o Jogo
+                </h2>
+                <p className="font-sans text-sm leading-relaxed mb-6">
+                  Um jogo inspirado no T-rex game do Chrome, mas com temática de The boys, o jogo segue o mesmo estilo do famoso "jogo do dinossauro do Chrome", mas com algumas mecânicas diferentes, mapa, personagens, menu e temática.
+                </p>
+                <button
+                  onClick={() => setShowAbout(false)}
+                  className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-[11px] tracking-widest rounded-xl transition duration-150 active:scale-95 uppercase font-bold"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* SCREEN: TEAM MODAL */}
+          {showTeam && (
+            <motion.div
+              key="modal-team"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm shadow-2xl"
+            >
+              <div className="w-full max-w-[400px] bg-slate-900 border-2 border-indigo-500 rounded-3xl p-8 relative flex flex-col text-left text-slate-200">
+                <h2 className="font-mono text-xl text-glow-blue italic font-black text-white uppercase mb-5 flex items-center gap-2">
+                  <Users size={20} className="text-indigo-400" /> Equipe do projeto
+                </h2>
+                <div className="flex flex-col gap-4 mb-6">
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 className="font-mono text-sm font-bold text-green-500 uppercase">Bruno</h3>
+                    <p className="font-sans text-xs text-slate-400 mt-1">Desenvolvedor, Designer</p>
+                  </div>
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 className="font-mono text-sm font-bold text-white uppercase">Breno</h3>
+                    <p className="font-sans text-xs text-slate-400 mt-1">Roteirista, Designer</p>
+                  </div>
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 className="font-mono text-sm font-bold text-red-500 uppercase">Henrrique(Xurrasco)</h3>
+                    <p className="font-sans text-xs text-slate-400 mt-1">Designer</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTeam(false)}
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[11px] tracking-widest rounded-xl transition duration-150 active:scale-95 uppercase font-bold"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* SCREEN: ACHIEVEMENTS MODAL */}
+          {showAchievements && (
+            <motion.div
+              key="modal-achievements"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm shadow-2xl"
+            >
+              <div className="w-full max-w-[430px] max-h-[90vh] bg-slate-900 border-2 border-yellow-500 rounded-3xl p-8 relative flex flex-col text-left text-slate-200 overflow-hidden">
+                <h2 className="font-mono text-xl text-glow-blue italic font-black text-white uppercase mb-1 flex items-center gap-2">
+                  <Trophy size={20} className="text-yellow-400" /> Suas Conquistas
+                </h2>
+                <p className="font-tech text-[8px] tracking-[0.15em] text-yellow-500 uppercase font-bold mb-4 select-none">
+                  Métricas de Desempenho Vought
+                </p>
+
+                <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 mb-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-slate-950">
+                  {ACHIEVEMENTS_DEF.map((ach, idx) => {
+                    const isUnlocked = unlockedIds.includes(ach.id);
+                    return (
+                      <div 
+                        key={`ach-${ach.id}-${idx}`} 
+                        className={`p-3.5 rounded-xl border transition-all duration-200 ${
+                          isUnlocked 
+                            ? 'bg-gradient-to-r from-yellow-950/25 to-slate-950 border-yellow-500/50 shadow-[0_0_12px_rgba(234,179,8,0.08)]' 
+                            : 'bg-slate-950/40 border-slate-800/80 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                            isUnlocked 
+                              ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' 
+                              : 'bg-slate-900 border-slate-800 text-slate-600'
+                          }`}>
+                            {ach.iconType === 'distance' && <Zap size={15} />}
+                            {ach.iconType === 'collect' && <Sparkles size={15} />}
+                            {ach.iconType === 'v1' && <BookOpen size={15} />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className={`font-mono text-[11.5px] font-black uppercase tracking-wider ${
+                                isUnlocked ? 'text-white' : 'text-slate-500'
+                              }`}>
+                                {ach.title}
+                              </h3>
+                              <span className={`font-mono text-[8px] uppercase px-1.5 py-0.5 rounded border ${
+                                isUnlocked 
+                                  ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' 
+                                  : 'bg-slate-900 border-slate-800/50 text-slate-500'
+                              }`}>
+                                {isUnlocked ? 'Desbloqueado' : 'Bloqueado'}
+                              </span>
+                            </div>
+                            <p className="font-sans text-[11px] text-slate-400 mt-1">
+                              {ach.description}
+                            </p>
+                            <p className="font-mono text-[8.5px] text-slate-500 uppercase tracking-widest mt-1.5 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-slate-600" />
+                              Requisito: {ach.conditionDescription}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setShowAchievements(false)}
+                  className="w-full py-3 bg-yellow-600 hover:bg-yellow-500 text-white font-mono text-[11px] tracking-widest rounded-xl transition duration-150 active:scale-95 uppercase font-bold"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Dynamic Achievement Notifications Overlay */}
+        <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none max-w-sm w-full">
+          <AnimatePresence>
+            {notifications.map((notif, idx) => (
+              <motion.div
+                key={`notif-${notif.id}-${idx}`}
+                initial={{ opacity: 0, x: 50, y: -20, scale: 0.9 }}
+                animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 50, scale: 0.9, transition: { duration: 0.2 } }}
+                className="bg-slate-950/95 border-2 border-yellow-500 rounded-2xl p-4 shadow-[0_0_25px_rgba(234,179,8,0.30)] backdrop-blur text-left flex gap-3 pointer-events-auto select-none"
+              >
+                <div className="w-10 h-10 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-center shrink-0">
+                  <Trophy className="text-yellow-400" size={18} />
+                </div>
+                <div>
+                  <span className="block text-[9px] font-mono text-yellow-500 tracking-widest uppercase font-black">Conquista Desbloqueada!</span>
+                  <span className="block font-mono text-sm font-bold text-white uppercase mt-0.5">{notif.title}</span>
+                  <span className="block font-sans text-xs text-slate-400 mt-1">{notif.description}</span>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </>
+    )}
+  </div>
+);
 }

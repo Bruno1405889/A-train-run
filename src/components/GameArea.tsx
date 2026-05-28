@@ -5,24 +5,34 @@ import {
   playCollectSound, 
   playHitSound, 
   playLaserChargeSound, 
-  playLaserShootSound 
+  playLaserShootSound,
+  playV1ActivateSound,
+  playShieldExhaustSound
 } from './SoundManager';
 import { Sparkles, FlaskConical, Zap, Award } from 'lucide-react';
 
 interface GameAreaProps {
   isPlaying: boolean;
   onGameOver: (finalScore: number) => void;
+  onQuit: () => void;
   speedMultiplier: number;
+  onGameEvent?: (type: string, value?: any) => void;
 }
 
 interface ObstacleInstance {
   id: string;
-  type: 'log' | 'rock' | 'pit' | 'branch';
+  type: 'log' | 'rock' | 'pit' | 'branch' | 'civilian';
   x: number;
   width: number;
   height: number;
   bottom: number;
   passed: boolean;
+  gender?: 'male' | 'female';
+  skinColor?: string;
+  hairColor?: string;
+  hairStyle?: string;
+  shirtColor?: string;
+  pantColor?: string;
 }
 
 interface ItemInstance {
@@ -70,9 +80,14 @@ const ZONES: ZoneType[] = [
   }
 ];
 
-export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: GameAreaProps) {
+export default function GameArea({ isPlaying, onGameOver, onQuit, speedMultiplier, onGameEvent }: GameAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  
+  const onGameEventRef = useRef(onGameEvent);
+  useEffect(() => {
+    onGameEventRef.current = onGameEvent;
+  }, [onGameEvent]);
   
   // Game reactive state via refs (to prevent React re-render lag)
   const multiplierRef = useRef(1);
@@ -110,6 +125,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   const itemsRef = useRef<ItemInstance[]>([]);
   const particlesRef = useRef<ParticleInstance[]>([]);
   const lastObstacleTypeRef = useRef<string>('');
+  const nextCivilianDistanceRef = useRef(600);
   
   // Track array lengths to avoid doing setState every frame
   const prevObsLenRef = useRef(0);
@@ -126,33 +142,52 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
   // Homelander laser schedule
   const laserCycleRef = useRef({
-    state: 'idle' as 'idle' | 'charging' | 'shooting',
+    state: 'idle' as 'idle' | 'warning' | 'charging' | 'shooting',
     timer: 0,
     targetY: 155,
+    isKiller: false,
   });
 
   // UI state updates maps
+  const [laserWarningText, setLaserWarningText] = useState<string | null>(null);
   const [activeObstacleList, setActiveObstacleList] = useState<ObstacleInstance[]>([]);
   const [activeItemList, setActiveItemList] = useState<ItemInstance[]>([]);
+  const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
 
-  const updateLaserUI = (active: boolean) => {
-    laserActiveRef.current = active;
-    const ids = ['laser-eye-1', 'laser-eye-2'];
-    ids.forEach(id => {
+  const updateLaserUI = (state: 'idle' | 'warning' | 'charging' | 'shooting') => {
+    const isKiller = laserCycleRef.current.isKiller;
+    laserActiveRef.current = state === 'shooting';
+
+    ['laser-eye-1', 'laser-eye-2'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
-        if (active) el.classList.add('animate-ping');
+        if (state === 'charging' || state === 'shooting') el.classList.add('animate-ping');
         else el.classList.remove('animate-ping');
       }
     });
-    
+
     ['laser-beam-1', 'laser-beam-2'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        if (active) {
-          el.classList.add('!opacity-[0.98]', 'scale-y-110');
+      const beam = document.getElementById(id);
+      if (beam) {
+        // Clear previous state classes
+        beam.classList.remove('!opacity-[0.98]', '!opacity-[0.6]', '!opacity-[0.3]', 'scale-y-110', 'animate-pulse');
+
+        if (state === 'shooting') {
+          beam.classList.add('!opacity-[0.98]', 'scale-y-110');
+        } else if (state === 'charging') {
+          beam.classList.add('!opacity-[0.6]', 'animate-pulse');
+        } else if (state === 'warning') {
+          beam.classList.add('!opacity-[0.3]');
+        }
+
+        // Targeting angles - fixed angle 54 specifically targeting the background near feet
+        if (state === 'shooting') {
+          beam.style.transform = 'rotate(54.5deg) scaleX(1.3) scaleY(1.4)';
+        } else if (state !== 'idle') {
+          beam.style.transform = 'rotate(54.5deg) scaleX(1.1)';
         } else {
-          el.classList.remove('!opacity-[0.98]', 'scale-y-110');
+          beam.style.transform = 'rotate(54.5deg)';
         }
       }
     });
@@ -197,6 +232,17 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       if (!isPlaying) return;
 
+      if (e.code === 'Escape' && !isDeadRef.current) {
+        setIsPaused(prev => {
+          const next = !prev;
+          isPausedRef.current = next;
+          return next;
+        });
+        return;
+      }
+
+      if (isPausedRef.current) return;
+
       // Jump activation
       if (e.code === 'ArrowUp' || e.code === 'Space') {
         if (playerGroundedRef.current) {
@@ -216,14 +262,18 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           if (v1el) v1el.innerText = v1ChargesRef.current.toString();
           
           updateShieldUI(true);
-          playLaserChargeSound();
+          playV1ActivateSound();
           
           if (shieldTimeoutRef.current) clearTimeout(shieldTimeoutRef.current);
           shieldTimeoutRef.current = setTimeout(() => {
             updateShieldUI(false);
+            playShieldExhaustSound();
           }, 3000);
           
           createCompoundVFlash();
+          if (onGameEventRef.current) {
+            onGameEventRef.current('activate-v1');
+          }
         }
       }
     };
@@ -244,7 +294,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
   // Handle level states resets
   useEffect(() => {
     if (isPlaying) {
+      setIsPaused(false);
+      isPausedRef.current = false;
       scoreRef.current = 0;
+      const meterEl = document.getElementById('ui-score-meters');
+      if (meterEl) meterEl.innerText = `0m`;
       curSpeedRef.current = 9.8;
       globalCyclesRef.current = 0;
       
@@ -262,7 +316,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       groundScrollRef.current = 0;
 
       updateMultiplierUI(false, 1);
-      updateLaserUI(false);
+      updateLaserUI('idle');
       updateShieldUI(false);
 
       if (playerRef.current) {
@@ -285,16 +339,19 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       itemsRef.current = [];
       particlesRef.current = [];
       lastObstacleTypeRef.current = '';
+      nextCivilianDistanceRef.current = 600;
 
       // Set initial zone style
       setCurrentZone(ZONES[0]);
       setActiveZoneBanner(null);
+      setLaserWarningText(null);
       activeZoneIdRef.current = 1;
 
       laserCycleRef.current = {
         state: 'idle',
         timer: Math.floor(Math.random() * 160) + 160, 
         targetY: 155,
+        isKiller: false,
       };
 
       if (loopRef.current) cancelAnimationFrame(loopRef.current);
@@ -310,6 +367,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
   // Main engine step loop
   const gameStep = () => {
+    if (isPausedRef.current) {
+      loopRef.current = requestAnimationFrame(gameStep);
+      return;
+    }
+
     if (isDeadRef.current) {
       updateParticles();
       loopRef.current = requestAnimationFrame(gameStep);
@@ -452,6 +514,11 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
     // Tick score meter
     if (globalCyclesRef.current % 5 === 0) {
       scoreRef.current += multiplierRef.current;
+      const meterEl = document.getElementById('ui-score-meters');
+      if (meterEl) meterEl.innerText = `${scoreRef.current}m`;
+      if (onGameEventRef.current) {
+        onGameEventRef.current('score', scoreRef.current);
+      }
     }
 
     loopRef.current = requestAnimationFrame(gameStep);
@@ -463,30 +530,41 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
     if (cycle.state === 'idle') {
       if (cycle.timer <= 0) {
+        cycle.state = 'warning';
+        cycle.timer = 60; // 60 frames (1s) of warning
+        cycle.isKiller = false;
+        setLaserWarningText(null);
+        updateLaserUI('warning');
+      }
+    } else if (cycle.state === 'warning') {
+      if (cycle.timer <= 0) {
         cycle.state = 'charging';
-        cycle.timer = 50; 
+        cycle.timer = 35; // 35 frames (0.58s) charging
         playLaserChargeSound();
+        updateLaserUI('charging');
       }
     } else if (cycle.state === 'charging') {
       if (cycle.timer <= 0) {
         cycle.state = 'shooting';
-        cycle.timer = 110; 
-        updateLaserUI(true);
+        cycle.timer = 25; // 25 frames shooting visual
+        updateLaserUI('shooting');
         playLaserShootSound();
+        setLaserWarningText(null); 
       }
     } else if (cycle.state === 'shooting') {
-      // Fire sparks on the ground near A-Train's feet to generate extreme tension!
+      // Fire sparks on the floor surface
       if (globalCyclesRef.current % 3 === 0) {
-        createSparks(210 + Math.random() * 45, 35 + Math.random() * 5, '#ff2200');
-        createSparks(210 + Math.random() * 45, 35 + Math.random() * 5, '#ffd54f');
+        // Spark point physically matched to where 54deg beam contacts A-Train Heel
+        createSparks(259 + Math.random() * 15, 36 + Math.random() * 4, '#ffffff');
+        createSparks(265 + Math.random() * 15, 36 + Math.random() * 4, '#ff2200');
       }
-
-      // COLLISION REMOVED: Homelander's laser is purely figurative and shoots behind/close to player feet level, keeping A-Train safe!
 
       if (cycle.timer <= 0) {
         cycle.state = 'idle';
-        cycle.timer = Math.floor(Math.random() * 220) + 160; 
-        updateLaserUI(false);
+        cycle.timer = 240 + Math.floor(Math.random() * 120); // Reduced frequency (approx 4 to 6 seconds)
+        cycle.isKiller = false;
+        setLaserWarningText(null);
+        updateLaserUI('idle');
       }
     }
   };
@@ -500,16 +578,32 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         minDistance = 960 - lastObs.x;
       }
 
-      // Dynamic gap threshold ensures reaction time is constant at high-speeds
-      const safeSpacingThreshold = Math.max(330, currentSpeed * 35 + (Math.random() * 120));
+      // Dynamic gap threshold ensures reaction time is constant at high-speeds. Fixed spacing stabilizes generation and avoids overlapping visuals.
+      let safeSpacingThreshold = Math.max(560, currentSpeed * 45);
+
+      // Balance constraint: if a killer laser challenge is active, give players generous spacing limit!
+      const laserActive = laserCycleRef.current.isKiller && (laserCycleRef.current.state === 'warning' || laserCycleRef.current.state === 'charging' || laserCycleRef.current.state === 'shooting');
+      if (laserActive) {
+        safeSpacingThreshold = Math.max(780, currentSpeed * 56); // Widen spacing severely so dodging both laser and obstacles is fun and fair
+      }
 
       if (minDistance > safeSpacingThreshold) {
         // Dynamic hazards selection
-        const types: ('log' | 'rock' | 'pit' | 'branch')[] = ['log', 'rock', 'pit', 'branch'];
-        let selected = types[Math.floor(Math.random() * types.length)];
+        const types: ('log' | 'rock' | 'pit' | 'branch')[] = ['log', 'log', 'rock', 'rock', 'pit', 'pit', 'branch', 'branch'];
+        let selected: 'log' | 'rock' | 'pit' | 'branch' | 'civilian' = types[Math.floor(Math.random() * types.length)];
 
-        // Prevent frustrating identical hazard pairs (e.g. double pits or branches)
-        if (selected === lastObstacleTypeRef.current) {
+        if (scoreRef.current >= nextCivilianDistanceRef.current) {
+          selected = 'civilian';
+          nextCivilianDistanceRef.current += 600;
+        }
+
+        // Balanced pacing constraint: If an intense killer laser is targeting A-Train, block branches/pits to avoid impossible overlapping crouch+jump traps!
+        if (laserActive && (selected === 'pit' || selected === 'branch')) {
+          selected = 'rock'; // Substitute with jumping/grounded obstacles which are dodging-aligned
+        }
+
+        // Prevent frustrating identical hazard pairs (e.g. double pits)
+        if (selected === lastObstacleTypeRef.current && selected !== 'civilian') {
           selected = selected === 'pit' ? 'rock' : 'log';
         }
 
@@ -517,9 +611,39 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         
         // Hazard bounds setups
         let w = 65, h = 35, y = 35;
-        if (selected === 'rock') { w = 55; h = 45; y = 35; } 
-        else if (selected === 'pit') { w = 82; h = 36; y = 0; } 
-        else if (selected === 'branch') { w = 90; h = 40; y = 112; } // Heights adapted for perfect crouch ducking
+        let gender: 'male' | 'female' | undefined = undefined;
+        let skinColor: string | undefined = undefined;
+        let hairColor: string | undefined = undefined;
+        let hairStyle: string | undefined = undefined;
+        let shirtColor: string | undefined = undefined;
+        let pantColor: string | undefined = undefined;
+
+        if (selected === 'rock') { 
+          w = 55; h = 45; y = 35; 
+        } else if (selected === 'pit') { 
+          w = 82; h = 36; y = 0; 
+        } else if (selected === 'branch') { 
+          w = 90; h = 40; y = 112; 
+        } else if (selected === 'civilian') {
+          // Tall human figure (same proportions as A-Train torso + head)
+          w = 55;
+          h = 90;
+          y = 35;
+          
+          // High-fidelity random diversity parameter generators
+          gender = Math.random() < 0.52 ? 'female' : 'male';
+          const skinColors = ['#54321d', '#8c5837', '#fed7aa', '#fdbb74', '#92400e'];
+          const hairColors = ['#111111', '#7a431d', '#d97706', '#6b7280', '#1c1917'];
+          const shirtColors = ['#dc2626', '#7c3aed', '#0891b2', '#2563eb', '#16a34a', '#db2777', '#ca8a04', '#475569'];
+          const pantColors = ['#1e293b', '#334155', '#0f172a', '#1e1b4b', '#78350f'];
+          const hairStyles = gender === 'female' ? ['long', 'ponytail', 'bun'] : ['short', 'curly', 'bald'];
+
+          skinColor = skinColors[Math.floor(Math.random() * skinColors.length)];
+          hairColor = hairColors[Math.floor(Math.random() * hairColors.length)];
+          shirtColor = shirtColors[Math.floor(Math.random() * shirtColors.length)];
+          pantColor = pantColors[Math.floor(Math.random() * pantColors.length)];
+          hairStyle = hairStyles[Math.floor(Math.random() * hairStyles.length)];
+        }
 
         obstaclesRef.current.push({
           id: Math.random().toString(36).substring(2, 9),
@@ -528,20 +652,34 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           width: w,
           height: h,
           bottom: y,
-          passed: false
+          passed: false,
+          gender,
+          skinColor,
+          hairColor,
+          hairStyle,
+          shirtColor,
+          pantColor
         });
       }
     }
 
     // Compound V Floating collectibles serum bottle
-    if (itemsRef.current.length === 0 && globalCyclesRef.current % 500 === 0 && Math.random() < 1.2 / speedMultiplier) {
+    if (itemsRef.current.length === 0 && globalCyclesRef.current % 450 === 0 && Math.random() < 1.2 / speedMultiplier) {
+      let safeItemX = 960;
+      if (obstaclesRef.current.length > 0) {
+        const lastObs = obstaclesRef.current[obstaclesRef.current.length - 1];
+        if (lastObs.x > 800) {
+          safeItemX = lastObs.x + 400; // Push generously to avoid overlapping with obstacle
+        }
+      }
+
       itemsRef.current.push({
         id: Math.random().toString(36).substring(2, 9),
         type: 'compound-v',
-        x: 960,
+        x: safeItemX,
         width: 38,
         height: 52,
-        bottom: Math.random() > 0.5 ? 120 : 60, 
+        bottom: 140, // Perfect elevated height for secure, unobstructed jumping
       });
     }
   };
@@ -565,11 +703,30 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (oLeft < pRight && oRight > pLeft && pTop > oBottom && pBottom < oTop) {
         if (shieldActiveRef.current) {
           // Destroys the obstacle during V1 Shield's 3-second invincibility!
+          if (obs.type === 'civilian') {
+            // Explode the civilian into blood splat as A-Train runs through them with active shield!
+            const civLeft = obs.x;
+            const civBottom = obs.bottom;
+            for (let s = 0; s < 45; s++) {
+              particlesRef.current.push({
+                id: Math.random().toString(),
+                x: civLeft + obs.width / 2,
+                y: civBottom + obs.height / 2,
+                vx: (Math.random() - 0.5) * 15 + 4,
+                vy: Math.random() * 11 + 2,
+                size: Math.random() * 6 + 4,
+                color: '#ef4444',
+                opacity: 1,
+                life: 45 + Math.random() * 20
+              });
+            }
+          }
+
           obstaclesRef.current.splice(i, 1);
           playHitSound();
           createFeedbackFlash('shield-break');
-          // Disperse cool impact particles
-          for (let s = 0; s < 10; s++) {
+          // Disperse cool sparkly impact particles
+          for (let s = 0; s < 12; s++) {
             particlesRef.current.push({
               id: Math.random().toString(),
               x: oLeft + obs.width / 2,
@@ -584,6 +741,34 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           }
           continue;
         } else {
+          // Fatal collision! If civilian, explode them into blood first
+          if (obs.type === 'civilian') {
+            const civEl = document.getElementById('obs-' + obs.id);
+            if (civEl) civEl.style.opacity = '0';
+            
+            const civLeft = obs.x;
+            const civBottom = obs.bottom;
+            for (let s = 0; s < 50; s++) {
+              particlesRef.current.push({
+                id: Math.random().toString() + s,
+                x: civLeft + obs.width / 2,
+                y: civBottom + obs.height / 2,
+                vx: (Math.random() - 0.5) * 16 + 5,
+                vy: Math.random() * 12 + 2,
+                size: Math.random() * 7 + 4,
+                color: '#ef4444', // Blood Red!
+                opacity: 1,
+                life: 45 + Math.random() * 20
+              });
+            }
+            // Add a blood splat sound
+            playHitSound(); 
+            
+            // Remove civilian from obstacle list and continue without dying
+            obstaclesRef.current.splice(i, 1);
+            continue;
+          }
+
           triggerGameOver();
           return;
         }
@@ -607,14 +792,22 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       if (iLeft < pRight && iRight > pLeft && pTop > iBottom && pBottom < iTop) {
         playCollectSound();
         
-        // Manual V1 Charge addition
-        v1ChargesRef.current += 1;
+        // Manual V1 Charge addition (Max 2)
+        if (v1ChargesRef.current < 2) {
+          v1ChargesRef.current += 1;
+        }
         const v1el = document.getElementById('v1-count');
         if (v1el) v1el.innerText = v1ChargesRef.current.toString();
 
         updateMultiplierUI(true, 3);
-        scoreRef.current += 50; 
+        scoreRef.current += 50;
+        const meterEl = document.getElementById('ui-score-meters');
+        if (meterEl) meterEl.innerText = `${scoreRef.current}m`;
         createCompoundVFlash();
+
+        if (onGameEventRef.current) {
+          onGameEventRef.current('collect-v', 1);
+        }
 
         // High multiplier expires after 6 seconds
         setTimeout(() => {
@@ -831,11 +1024,14 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       {/* Top dashboard panels */}
       <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center">
-        <div className="flex gap-4 font-mono">
+        <div className="flex gap-4 font-mono pl-24">
           <div className="bg-slate-950/80 border-2 border-fuchsia-500 rounded-lg px-3 py-1.5 flex items-center gap-2 select-none shadow-lg">
             <FlaskConical size={14} className="text-fuchsia-400 animate-pulse" />
             <span className="text-white text-xs tracking-wider">V1 (Tecla E):</span>
-            <span id="v1-count" className="text-fuchsia-400 text-sm font-extrabold">0</span>
+            <div>
+              <span id="v1-count" className="text-fuchsia-400 text-sm font-extrabold">0</span>
+              <span className="text-fuchsia-500/70 text-xs font-bold pl-0.5">/2</span>
+            </div>
           </div>
 
           <div 
@@ -855,17 +1051,34 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
           </div>
         </div>
 
-        {/* Simple running circuit overlay */}
-        <div className="flex items-center gap-2 bg-slate-950/85 border-2 border-slate-700 rounded-lg px-3 py-1 text-[10px] font-mono text-slate-300 select-none shadow-lg">
-          <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: currentZone.particleColor }} />
-          <span>{currentZone.name}</span>
+        {/* Simple running circuit & Meters overlay */}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2 bg-slate-950/85 border-2 border-slate-700 rounded-lg px-3 py-1 text-[10px] font-mono text-slate-300 select-none shadow-lg">
+            <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: currentZone.particleColor }} />
+            <span>{currentZone.name}</span>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-950/90 border-2 border-cyan-500/50 rounded-lg px-4 py-2 text-cyan-400 select-none shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+            <span id="ui-score-meters" className="font-mono text-lg font-black tracking-widest text-glow-blue uppercase">0m</span>
+          </div>
         </div>
       </div>
+
+      {/* CAPTAIN PATRIA KILLER LASER WARNING tactically overlayed */}
+      {laserWarningText && (
+        <div className="absolute inset-x-0 top-[85px] z-30 flex justify-center items-center pointer-events-none">
+          <div className="bg-red-950/95 border-2 border-red-500 rounded-xl px-4 py-2 flex items-center gap-2.5 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.4)]">
+            <Zap className="text-red-400 animate-bounce" size={16} />
+            <span className="text-red-200 font-mono text-[11px] font-extrabold tracking-widest uppercase animate-pulse">
+              {laserWarningText}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* HOMELANDER (Capitão Pátria) */}
       <div 
         id="homelander" 
-        className="absolute bottom-[200px] left-[50px] w-[85px] h-[130px] z-[15] pointer-events-none"
+        className="absolute bottom-[240px] left-[-10px] w-[85px] h-[130px] z-[15] pointer-events-none"
         style={{
           animation: 'homelanderFly 2.2s infinite ease-in-out',
         }}
@@ -961,7 +1174,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         {/* EYE GLOW RAY BEAM (LEFT EYE) */}
         <div 
           id="laser-beam-1"
-          className="absolute top-[25px] left-[44px] w-[305px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0" 
+          className="absolute top-[25px] left-[44px] w-[383px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left z-[20] pointer-events-none transition-opacity duration-200 opacity-0" 
           style={{
             border: '1.2px solid #ff2200',
             boxShadow: '0 0 8px #ff2111',
@@ -971,7 +1184,7 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
         {/* EYE GLOW RAY BEAM (RIGHT EYE) */}
         <div 
           id="laser-beam-2"
-          className="absolute top-[27px] left-[52px] w-[295px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left rotate-[64.3deg] z-[12] pointer-events-none transition-opacity duration-700 opacity-0" 
+          className="absolute top-[27px] left-[52px] w-[381px] h-[6px] bg-gradient-to-r from-[#ffffff] via-[#ff2200] to-[#ffaa00]/40 rounded-full origin-top-left z-[20] pointer-events-none transition-opacity duration-200 opacity-0" 
           style={{
             border: '1.2px solid #ff2200',
             boxShadow: '0 0 8px #ff2111',
@@ -1087,10 +1300,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       {/* DYNAMIC OBSTACLES */}
       <div id="obstacles-container">
-        {activeObstacleList.map((obs) => {
+        {activeObstacleList.map((obs, idx) => {
           return (
             <div 
-              key={obs.id}
+              key={`obs-${obs.id}-${idx}`}
               id={`obs-${obs.id}`}
               className="absolute will-change-transform z-[15]"
               style={{
@@ -1164,27 +1377,33 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
               {obs.type === 'pit' && (
                 <svg width="100%" height="100%" viewBox="0 0 85 36" xmlns="http://www.w3.org/2000/svg">
                   <defs>
-                    <radialGradient id="forest-pit" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#020306"/>
-                      <stop offset="78%" stopColor="#0d110f"/>
-                      <stop offset="100%" stopColor="#1b2e1e"/>
+                    <radialGradient id="pit-hole" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stopColor="#000000"/>
+                      <stop offset="80%" stopColor="#0a0a0a"/>
+                      <stop offset="100%" stopColor="#1a1a1a"/>
                     </radialGradient>
-                    <linearGradient id="grass-pit" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#22c55e"/>
-                      <stop offset="100%" stopColor="#14532d"/>
+                    <linearGradient id="pit-edge" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#451a03"/>
+                      <stop offset="100%" stopColor="#1c1917"/>
+                    </linearGradient>
+                    <linearGradient id="rock-grad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#57534e"/>
+                      <stop offset="100%" stopColor="#292524"/>
                     </linearGradient>
                   </defs>
-                  {/* Grassy soil frame outline */}
-                  <ellipse cx="42.5" cy="18" rx="42.5" ry="18" fill="url(#grass-pit)" stroke="#0c0d14" strokeWidth="1.5" />
-                  {/* Hollow cavern abysm shadow */}
-                  <ellipse cx="42.5" cy="18" rx="36" ry="12.5" fill="url(#forest-pit)" stroke="#0c0d14" strokeWidth="2" />
-                  {/* Exposed roots wrapping the edge */}
-                  <path d="M5 14 Q 22 24 40 16" stroke="#40250d" strokeWidth="3" fill="none" />
-                  <path d="M45 15 Q 65 8 80 16" stroke="#2a1605" strokeWidth="2.5" fill="none" />
                   
-                  {/* Tufts of wild blades of grass */}
-                  <path d="M12 10 L 14 2 L 18 11" stroke="#15803d" strokeWidth="1.5" fill="none" />
-                  <path d="M72 10 L 75 3 L 78 12" stroke="#15803d" strokeWidth="1.5" fill="none" />
+                  {/* Outer dirt rim */}
+                  <ellipse cx="42.5" cy="18" rx="40" ry="16" fill="url(#pit-edge)" stroke="#292524" strokeWidth="2" />
+                  
+                  {/* Black hole inside */}
+                  <path d="M 12 18 Q 20 5 42.5 5 Q 65 5 73 18 Q 65 31 42.5 31 Q 20 31 12 18 Z" fill="url(#pit-hole)" stroke="#000000" strokeWidth="1" />
+                  
+                  {/* Rocks scattered around the edge */}
+                  <path d="M 5 15 L 12 11 L 18 16 L 10 20 Z" fill="url(#rock-grad)" stroke="#1c1917" strokeWidth="1" />
+                  <path d="M 35 4 L 45 2 L 50 6 L 40 9 Z" fill="url(#rock-grad)" stroke="#1c1917" strokeWidth="1" />
+                  <path d="M 70 12 L 78 15 L 82 22 L 72 18 Z" fill="url(#rock-grad)" stroke="#1c1917" strokeWidth="1" />
+                  <path d="M 60 28 L 68 25 L 70 30 L 62 33 Z" fill="url(#rock-grad)" stroke="#1c1917" strokeWidth="1" />
+                  <path d="M 25 28 L 32 30 L 30 35 L 22 32 Z" fill="url(#rock-grad)" stroke="#1c1917" strokeWidth="1" />
                 </svg>
               )}
 
@@ -1215,6 +1434,92 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
                   <path d="M54 28 Q 58 35 56 39" stroke="#15803d" strokeWidth="1.5" fill="none" opacity="0.8" />
                 </svg>
               )}
+
+              {obs.type === 'civilian' && (
+                <svg width="100%" height="100%" viewBox="0 0 40 60" xmlns="http://www.w3.org/2000/svg" style={{ overflow: 'visible' }}>
+                  <defs>
+                    <linearGradient id={`civ-shirt-${obs.id}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor={obs.shirtColor || '#3b82f6'}/><stop offset="100%" stopColor="#1e3a8a"/></linearGradient>
+                    <linearGradient id={`civ-pants-${obs.id}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor={obs.pantColor || '#475569'}/><stop offset="100%" stopColor="#0f172a"/></linearGradient>
+                    <linearGradient id={`civ-skin-${obs.id}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor={obs.skinColor || '#fed7aa'}/><stop offset="100%" stopColor="#c2410c"/></linearGradient>
+                  </defs>
+
+                  {/* walking legs */}
+                  <g className="civ-leg-back" style={{ transformOrigin: '15px 38px', animation: 'civilianWalkLegBack 0.4s infinite linear' }}>
+                    <rect x="14.5" y="38" width="5.5" height="15" fill={`url(#civ-pants-${obs.id})`} rx="2" stroke="#020206" strokeWidth="1.2"/>
+                    {/* Shoe */}
+                    <rect x="13.5" y="52" width="7" height="3" fill="#111111" rx="1" stroke="#020206" strokeWidth="0.8"/>
+                  </g>
+
+                  <g className="civ-leg-front" style={{ transformOrigin: '21px 38px', animation: 'civilianWalkLegFront 0.4s infinite linear' }}>
+                    <rect x="20.5" y="38" width="5.5" height="15" fill={`url(#civ-pants-${obs.id})`} rx="2" stroke="#020206" strokeWidth="1.2"/>
+                    {/* Shoe */}
+                    <rect x="19.5" y="52" width="7" height="3" fill="#111111" rx="1" stroke="#020206" strokeWidth="0.8"/>
+                  </g>
+
+                  {/* Body torso */}
+                  <g className="civ-torso-group" style={{ transformOrigin: '17px 35px', animation: 'civilianWalkTorso 0.4s infinite ease-in-out alternate' }}>
+                    {/* Back Arm */}
+                    <g className="civ-arm-back" style={{ transformOrigin: '15px 21px', animation: 'civilianWalkArmBack 0.4s infinite ease-in-out alternate' }}>
+                      <rect x="12.5" y="20" width="5.5" height="14" fill={`url(#civ-shirt-${obs.id})`} rx="2.5" stroke="#020206" strokeWidth="1"/>
+                      <circle cx="15.2" cy="33" r="2.5" fill={`url(#civ-skin-${obs.id})`} stroke="#020206" strokeWidth="0.8" />
+                    </g>
+
+                    {/* Torso Shirt */}
+                    <rect x="13.5" y="18" width="14.5" height="23" fill={`url(#civ-shirt-${obs.id})`} rx="4" stroke="#020206" strokeWidth="1.2"/>
+                    
+                    {/* Female Dress shape overlap if female and custom styled */}
+                    {obs.gender === 'female' && (
+                      <polygon points="13.5,30 28,30 30,41 11.5,41" fill={`url(#civ-shirt-${obs.id})`} stroke="#020206" strokeWidth="1.2" />
+                    )}
+
+                    {/* Front Arm */}
+                    <g className="civ-arm-front" style={{ transformOrigin: '23px 21px', animation: 'civilianWalkArmFront 0.4s infinite ease-in-out alternate' }}>
+                      <rect x="20.5" y="20" width="5.5" height="14" fill={`url(#civ-shirt-${obs.id})`} rx="2.5" stroke="#020206" strokeWidth="1.2"/>
+                      <circle cx="23.2" cy="33" r="2.5" fill={`url(#civ-skin-${obs.id})`} stroke="#020206" strokeWidth="0.8" />
+                    </g>
+
+                    {/* Head & Neck */}
+                    <rect x="19" y="15" width="4" height="4" fill={`url(#civ-skin-${obs.id})`} stroke="#020206" strokeWidth="0.8" />
+                    <circle cx="21" cy="11.5" r="5.5" fill={`url(#civ-skin-${obs.id})`} stroke="#020206" strokeWidth="1.1" />
+
+                    {/* Dynamic Hair Styles */}
+                    {obs.hairStyle === 'short' && (
+                      <path d="M15.5 10 C 15.5 5.5, 26.5 5.5, 26.5 10 C 25.5 10, 24.5 9, 21 9 Q 16.5 9, 15.5 10 Z" fill={obs.hairColor || '#111111'} stroke="#020206" strokeWidth="0.8"/>
+                    )}
+                    {obs.hairStyle === 'curly' && (
+                      <g fill={obs.hairColor || '#111111'}>
+                        <circle cx="21" cy="6" r="2.5" />
+                        <circle cx="18" cy="7" r="2" />
+                        <circle cx="24" cy="7" r="2" />
+                        <circle cx="16" cy="10" r="2.2" />
+                        <circle cx="26" cy="10" r="2.2" />
+                      </g>
+                    )}
+                    {obs.hairStyle === 'long' && (
+                      <g>
+                        {/* Mane behind head */}
+                        <path d="M15 11 Q 14 22 17 22 Q 21 21 21 16 Q 26 21 26 22" stroke={obs.hairColor || '#1c1c1c'} strokeWidth="3" fill="none" strokeLinecap="round" />
+                        <path d="M15.5 10 C 15.5 5, 26.5 5, 26.5 10 C 25.5 9.5, 24.5 8.5, 21 8.5 C 16.5 9, 15.5 10 Z" fill={obs.hairColor || '#1c1c1c'} stroke="#020206" strokeWidth="0.8" />
+                      </g>
+                    )}
+                    {obs.hairStyle === 'ponytail' && (
+                      <g>
+                        <path d="M15.5 10 C 15.5 5, 26.5 5, 26.5 10 C 25.5 9.5, 24.5 8.5, 21 8.5 Z" fill={obs.hairColor || '#1c1c1c'} stroke="#020206" strokeWidth="0.8" />
+                        <path d="M15.5 10 Q 11 15 12 20" stroke={obs.hairColor || '#111111'} strokeWidth="2.5" fill="none" strokeLinecap="round" />
+                        <circle cx="16" cy="11.5" r="1.5" fill="#ef4444" />
+                      </g>
+                    )}
+                    {obs.hairStyle === 'bun' && (
+                      <g>
+                        <path d="M15.5 10 C 15.5 5, 26.5 5, 26.5 10 C 25.5 9.5, 24.5 8.5, 21 8.5 Z" fill={obs.hairColor || '#1c1c1c'} stroke="#020206" strokeWidth="0.8" />
+                        <circle cx="21" cy="4.5" r="3" fill={obs.hairColor || '#1c1c1c'} stroke="#020206" strokeWidth="0.8" />
+                      </g>
+                    )}
+                    {/* Little eyes for detailed face expression */}
+                    <circle cx="19" cy="11.2" r="0.6" fill="#020206" />
+                  </g>
+                </svg>
+              )}
             </div>
           );
         })}
@@ -1222,10 +1527,10 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
 
       {/* COMPOUND V FLOATING COLLECTIBLES */}
       <div id="items-container">
-        {activeItemList.map((item) => {
+        {activeItemList.map((item, idx) => {
           return (
             <div
-              key={item.id}
+              key={`item-${item.id}-${idx}`}
               id={`item-${item.id}`}
               className="absolute z-[15] pointer-events-none"
               style={{
@@ -1270,7 +1575,57 @@ export default function GameArea({ isPlaying, onGameOver, speedMultiplier }: Gam
       <div id="particles-container"></div>
 
       {/* Style Animations helpers */}
+      {isPaused && (
+        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="w-[400px] bg-slate-950/92 border-4 border-indigo-500 rounded-3xl p-10 shadow-[0_0_50px_rgba(99,102,241,0.22)] flex flex-col items-center gap-4 backdrop-blur text-center relative">
+            <h2 className="font-mono text-4xl tracking-tighter text-glow-blue italic font-black text-white leading-none uppercase">PAUSADO</h2>
+            <p className="font-tech text-[10px] tracking-[0.2em] text-cyan-400 font-bold uppercase mb-4 select-none animate-pulse">SISTEMA VOUGHT EM ESPERA</p>
+            
+            <div className="flex flex-col gap-3 w-full">
+              <button
+                onClick={() => {
+                  setIsPaused(false);
+                  isPausedRef.current = false;
+                }}
+                className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-gradient-to-r from-cyan-500 via-indigo-600 to-fuchsia-600 hover:from-cyan-400 hover:via-indigo-500 hover:to-fuchsia-500 border-2 border-cyan-400 text-white font-mono text-xs tracking-widest font-black rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition duration-155 hover:scale-[1.02] active:scale-[0.98] cursor-pointer uppercase"
+              >
+                Continuar
+              </button>
+              <button
+                onClick={onQuit}
+                className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-red-400 hover:text-red-300 hover:border-red-500/50 font-mono text-xs tracking-widest font-black rounded-xl transition duration-155 hover:scale-[1.02] active:scale-[0.98] cursor-pointer uppercase"
+              >
+                Menu Principal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
+        @keyframes civilianWalkLegFront {
+          0% { transform: rotate(-30deg); }
+          50% { transform: rotate(25deg); }
+          100% { transform: rotate(-30deg); }
+        }
+        @keyframes civilianWalkLegBack {
+          0% { transform: rotate(25deg); }
+          50% { transform: rotate(-30deg); }
+          100% { transform: rotate(25deg); }
+        }
+        @keyframes civilianWalkArmFront {
+          0% { transform: rotate(35deg); }
+          100% { transform: rotate(-35deg); }
+        }
+        @keyframes civilianWalkArmBack {
+          0% { transform: rotate(-35deg); }
+          100% { transform: rotate(35deg); }
+        }
+        @keyframes civilianWalkTorso {
+          0% { transform: translateY(0px) rotate(-1deg); }
+          100% { transform: translateY(1.5px) rotate(1.5deg); }
+        }
+
         @keyframes homelanderFly {
           0% { transform: translateY(0px) rotate(3deg); }
           50% { transform: translateY(-13px) rotate(-1.5deg); }

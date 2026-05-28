@@ -154,3 +154,63 @@ export function playLaserChargeSound() {
     // Fail silently
   }
 }
+
+export function playV1ActivateSound() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(440, now);
+    osc.frequency.exponentialRampToValueAtTime(1760, now + 0.2);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.4);
+    
+    const drone = ctx.createOscillator();
+    const droneGain = ctx.createGain();
+    drone.type = 'sine';
+    drone.frequency.setValueAtTime(60, now);
+    drone.frequency.linearRampToValueAtTime(40, now + 0.8);
+    droneGain.gain.setValueAtTime(0.3, now);
+    droneGain.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+    drone.connect(droneGain);
+    droneGain.connect(ctx.destination);
+    drone.start(now);
+    drone.stop(now + 0.8);
+  } catch (err) {
+  }
+}
+
+export function playShieldExhaustSound() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2000, now);
+    filter.frequency.exponentialRampToValueAtTime(200, now + 0.5);
+    
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.5);
+  } catch (err) {
+  }
+}
